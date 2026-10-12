@@ -1,0 +1,80 @@
+# ACM Local Judge
+
+Windows 原生 C++23 本地测评工作台。Vue 3 + Monaco 前端，ASP.NET Core 10 后端，独立 Worker，SQLite 持久化。
+
+## 启动
+
+双击项目根目录的 **`start.cmd`**。首次启动会安装前端依赖、构建服务并打开 **http://127.0.0.1:27123**。安装完成后网页和评测可以离线运行，不依赖 CDN。
+
+需要 Windows 10/11 x64、.NET 10 SDK、Node.js 22.12+、pnpm 11 和支持 C++23 的 MinGW-w64 GCC。当前默认编译器为 `D:\mingw64\bin\g++.exe`；可在网页左下角「运行环境」修改。
+
+```powershell
+# 初次启动 / 源码更新后重新构建
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
+
+# 已构建时快速启动
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -SkipBuild
+```
+
+保留服务终端，按 Ctrl+C 结束服务。若服务已启动，再次运行启动脚本会打开现有网页。端口只监听回环地址，不提供局域网或公网访问。
+
+## 使用
+
+1. 选择内置题目，或点击题库旁的 `+` 建题。
+2. 设定类型、题面、资源限制；在「测试数据」中上传同名 `.in/.ans` 或手动编辑。
+3. 特判/交互/多进程题在「判题程序」中填写相应 C++ 源码；工具头文件已内置。
+4. 在「编写代码」编辑或载入 `.cpp`，点击提交评测。
+5. 结果通过 SSE 实时更新。点击测试点查看各轮、各进程、stdout/stderr、退出码及通信时间线。
+6. 「提交记录」可查看原源码及结果，按原题目、测试数据和工具头文件快照重评。
+7. 题目右上角可导出 ZIP；左侧「导入题目包」先预览，确认后创建新题目。
+
+内置标准求和、浮点特判、即时加倍交互、双轮通信、多进程平方和五道示例。每道题都带正确及错误程序。正确示例加载到编辑器后仍可自行修改，草稿按题目保存在浏览器本地。
+
+## 评测语义
+
+| 类型 | 协议 | 资源汇总 |
+|---|---|---|
+| 标准 | 输入 UTF-8 文本；按 ASCII 空格、Tab、CR、LF、VT、FF 分割，精确比较 token；无数值转换 | 单个选手实例 |
+| 特判 | `checker input.txt output.txt answer.txt`，支持 testlib | 仅计选手 |
+| 交互 | `interactor input.txt transcript.txt answer.txt`；stdin/stdout 双向管道，可选后置 checker | 仅计选手 |
+| 通信 | 两次新进程、新工作目录；默认第一轮输出原始字节转发到第二轮；支持 manager 模式 | 两轮 CPU/内存分别取最大值 |
+| 多进程 | 同一程序 N 个实例；`argv[1]` 为 0 起始编号，`argv[2]` 为 N；manager 路由消息 | 每实例分别限额，CPU/内存分别取最大值 |
+
+标准题 `02` 不等于 `2`，`2.0` 不等于 `2`，`Yes` 不等于 `yes`。无效 UTF-8 输出返回 WA，不会以替换字符参与比较。特判读取选手输出原始字节。
+
+编译参数固定 `-std=c++23 -O2 -pipe`，判题工具额外包含 `toolkit` 目录。每次记录实际 GCC 版本。C++23 的具体标准库功能支持由安装的 GCC 决定。
+
+CPU 为实例所属 Job 的用户态 + 内核态时间，包含其线程；内存为 **Windows 提交内存峰值**，不是 Linux RSS。CPU 通过约 10ms 周期检查，并在退出后再核算；极短程序的读数存在系统计时粒度。墙钟独立限制读写等待；不提供自动 flush。
+
+默认：选手 2000ms CPU / 10000ms 墙钟 / 256MiB / stdout+stderr 16MiB；编译 60s / 1GiB / 日志 1MiB；判题工具 10000ms CPU / 512MiB。交互与 manager 的墙钟至少覆盖整个选手会话。多进程数 2–16。
+
+选手进程挂起创建、加入 Job 后恢复运行；关闭 Job 自动清理进程。选手每实例只允许一个 OS 进程，内部可用线程；多个协作实例由评测器启动。编译器允许必要的子进程。所有提交串行，普通错误后仍运行剩余测试点；最终取测试点顺序中首个非 AC，基础设施错误或取消单独处理。
+
+状态：AC、WA、PE、CE、RE、TLE、MLE、OLE、Judge Error、Cancelled、Interrupted，以及 Queued/Compiling/Running。checker/interactor 的 0/1/2 退出码映射 AC/WA/PE，其他退出码或工具超限为 Judge Error；不支持部分分。manager 使用显式判定消息，并正常退出。
+
+## 数据与开发
+
+`data/judge.db` 保存题目和提交索引，`data/problems/` 保存题目版本及数据文件，`data/submissions/` 保存每次源码、快照、编译产物和日志。删除题目不删除历史快照。服务重启将未完成提交标记 Interrupted，不自动重复执行。备份时先停止服务，再复制整个 `data` 目录。
+
+源码结构：`src/Judge.Core` 是 Windows 运行器和判题引擎；`src/Judge.Worker` 是独立执行入口；`src/Judge.Server` 是队列、SQLite、题目包和 HTTP API；`web` 是 Vue 工作台；`toolkit` 内置固定版本的 testlib 和 C++ manager SDK。
+
+```powershell
+# 前端开发（另一个终端运行后端）
+cd web
+pnpm dev
+
+# 全部自动验收；先关闭正在运行的服务，避免锁定发布文件
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
+```
+
+自动测试使用真实 GCC 和 Windows Job Objects。日志、JSON 结果和临时数据库保存在 `artifacts/`，与 `data/` 分离。可用 `ACM_ROOT`、`ACM_DATA`、`ACM_COMPILER` 配置后端；`ACM_PORT` 可供隔离测试使用（生产启动脚本固定 27123）。同一数据目录只允许一个服务实例。
+
+协议与格式详见 [协议文档](docs/protocols.md)，验收记录见 [验证报告](docs/verification.md)。
+
+## 边界
+
+面向本机可信代码训练。Job Objects 限制资源与管理进程，**不隔离文件、注册表和网络**；新轮次只保证分配的工作目录全新。请勿用于运行陌生来源的恶意程序，也不要将服务反向代理到公网。没有账号、排行榜、比赛、部分分或外部 OJ 包格式兼容。
+
+首次安装可能需要联网；启动失败会保留终端错误。若编译成功而程序提示缺失 MinGW DLL，请确认编译器同目录包含对应运行库。Monaco 编辑器按需加载，首次切换代码页会比题面稍慢。
+
+第三方代码来源和版本在 `toolkit/VERSIONS.txt`，许可证保留在各头文件中： [testlib](https://github.com/MikeMirzayanov/testlib)、[nlohmann/json](https://github.com/nlohmann/json)。Windows 实现依据 [Job Objects 文档](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。
