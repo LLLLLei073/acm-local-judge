@@ -21,7 +21,12 @@ inline std::string decode(const std::string& s) {
 }
 inline void command(const json& value) { std::cout << value.dump() << '\n' << std::flush; }
 inline json receive() { std::string line; if (!std::getline(std::cin, line)) return {{"type", "eof"}}; return json::parse(line); }
-inline void send(int id, const std::string& data) { command({{"type", "send"}, {"id", id}, {"data", encode(data)}}); }
+// A contestant line can be megabytes long. Only the internal JSON frames are
+// chunked; no bytes/newlines are added to the contestant's protocol.
+inline void send(int id, const std::string& data) {
+    for (std::size_t offset = 0; offset < data.size(); offset += 8192)
+        command({{"type", "send"}, {"id", id}, {"data", encode(data.substr(offset, 8192))}});
+}
 inline void close(int id) { command({{"type", "close"}, {"id", id}}); }
 inline void start() { command({{"type", "start"}}); }
 inline void verdict(const std::string& value, const std::string& message = "") { command({{"type", "verdict"}, {"verdict", value}, {"message", message}}); }

@@ -1,7 +1,10 @@
 export type Mode = 'Standard' | 'Special' | 'Interactive' | 'Communication' | 'Multiprocess';
 export interface Limits { cpuMs: number; wallMs: number; memoryMiB: number; outputKiB: number }
 export interface TestData { name: string; input: string; answer: string }
-export interface Problem { id: string; title: string; statement: string; mode: Mode; limits: Limits; judgeLimits: Limits; checker: string; interactor: string; manager: string; managedCommunication: boolean; firstMarker: string; secondMarker: string; processCount: number; protocol: string; tests: TestData[]; exampleSource: string; wrongSource: string }
+export interface FlowData { source: 'literal' | 'input' | 'answer' | 'message'; text: string; stepId: string; startLine: number; lineCount: number }
+export interface FlowStep { id: string; kind: 'send' | 'receive' | 'close'; from: number; to: number; lines: number; data: FlowData; additionalData: FlowData[]; check: boolean; expected: FlowData; sample: string }
+export interface CommunicationFlow { version: number; enabled: boolean; members: string[]; steps: FlowStep[] }
+export interface Problem { id: string; title: string; statement: string; mode: Mode; limits: Limits; judgeLimits: Limits; checker: string; interactor: string; manager: string; managedCommunication: boolean; firstMarker: string; secondMarker: string; processCount: number; protocol: string; tests: TestData[]; exampleSource: string; wrongSource: string; flow?: CommunicationFlow | null }
 export interface ProblemSummary { id: string; title: string; mode: Mode; limits: Limits; testCount: number }
 export interface Submission { id: string; problemId: string; title: string; mode: Mode; status: string; createdAt: string }
 export interface Run { verdict: string; message: string; exitCode: number; usage: { cpuMs: number; wallMs: number; memoryBytes: number }; stdout: string; stderr: string }
@@ -12,7 +15,7 @@ export const modes: { value: Mode; label: string; short: string; color: string; 
   { value: 'Special', label: '特判评测', short: 'SPJ', color: '#b76219', description: '由 checker 判断答案，支持浮点容差、多解和格式检查。' },
   { value: 'Interactive', label: '交互评测', short: 'INT', color: '#17836d', description: '与 interactor 实时问答。每次输出后 flush，不要等待 EOF。' },
   { value: 'Communication', label: '通信评测', short: 'COM', color: '#8556ba', description: '同一程序依次启动两次。新进程、新目录，两轮资源取最大值。' },
-  { value: 'Multiprocess', label: '多进程评测', short: 'MUL', color: '#bb4878', description: 'manager 协调多个独立进程。分别限额，资源取最大值。' },
+  { value: 'Multiprocess', label: '多进程评测', short: 'MUL', color: '#bb4878', description: '同一程序同时运行多个角色，argv[1] 为角色编号。调度器分发各自输入、实时转发消息并判定；每步输出需 flush。分别限额，资源取最大值。' },
 ];
 export const modeInfo = (m: Mode) => modes.find(x => x.value === m)!;
 export const active = (status: string) => ['Queued', 'Compiling', 'Running'].includes(status);

@@ -4,7 +4,8 @@
 
 ## 自动测试
 
-- 原生引擎：47 项检查，使用真实 C++23 编译与运行，不是模拟结果。
+- 原生引擎：49 项检查，使用真实 C++23 编译与运行，不是模拟结果。
+- 双泊对照专项：18 项检查，验证两个角色的往返交互、原始字节转发和双方最终答案。
 - API / 题目包：29 项检查，独立数据目录、独立 27124 端口，真实 Worker。
 - 后端 Release 构建：通过；SQLite 已升级到 Microsoft.Data.Sqlite 10.0.12 / SQLitePCLRaw 3.0.5，当前 restore/build 无已知漏洞告警。
 - 前端 vue-tsc 类型检查及 Vite 生产构建：通过。Monaco 独立按需加载；编辑器包仍有体积提示，首页 JS 约 177KB（gzip 64KB）。
@@ -21,7 +22,17 @@
 
 API / 包检查覆盖：五类 ZIP 往返、字段验证、目录越界、Windows 路径、解压上限、建题、配对数据上传及缺配拒绝、真实提交、SSE 终态、快照重评、导入新题、运行中取消、Worker 确认取消、服务突然退出无残留选手进程、重启 Interrupted、历史持久化、跨站 Origin 拒绝、删除题目保留提交。
 
-自动测试证据位于 `artifacts/smoke-*/report.json`、`artifacts/api-*/report.json`，逐程序结果在对应目录；最近一次原生控制台输出保存在 `artifacts/native-verification-final.log`。
+自动测试证据位于 `artifacts/smoke-*/report.json`、`artifacts/multiprocess-*/report.json`、`artifacts/api-*/report.json`，逐程序结果在对应目录。本次回归分别为 smoke-20261012-202209、multiprocess-20261012-202000、api-20261012-202434，共 96 项通过。
+
+双泊对照专项覆盖相同多重集、重复次数不同、10¹⁸ 数值、双方答案不一致、双方一致但错误、未排序、额外输出、提前退出、单角色 RE/TLE、未 flush、逐字节输出和 CRLF/Tab 原样转发。最大规模 n=200000、19 位整数的长行测试 AC；该次两个角色 CPU 分别约 78.13ms / 46.88ms，提交内存峰值汇总约 5.12MiB。时间为本机观测，不是性能保证。
+
+## 可视化成员与通信流程验收
+
+原生判题回归 49 项，双泊多进程 manager 回归 18 项，可视化流程专项 36 项，HTTP/API 回归 33 项。专项测试使用真实 C++23 进程验证五步往返、原样 CRLF 转发、行分片、10 万字节长行、拼接数据、EOF、输出校验、非法成员/步骤引用、额外输出、提前退出、未 flush、CPU/输出限制和取消；题目包、SQLite、不可变快照及重评均通过。
+
+浏览器操作：导入 `examples/VisualFlow.zip`，编辑成员名称与步骤顺序，验证仍被引用的成员/消息受保护，编辑数据来源与片段并保存。Worker 真实评测两个测试点均 AC。把步骤 4 期望值改为 999 后返回 `WA：步骤 4`，恢复参考答案后重新 AC。
+
+本轮变更留在工作区，未提交或推送 GitHub。
 
 ## 浏览器验收
 
@@ -35,6 +46,8 @@ API / 包检查覆盖：五类 ZIP 往返、字段验证、目录越界、Window
 6. 检查 390px 窄屏布局，文档宽度未超过视口；随后恢复默认视口。
 
 截图：`artifacts/screenshots/multiprocess-result.jpg`。浏览器验收使用 `artifacts/browser-data`，正式启动使用 `data`，不混入验收题目。
+
+2026-10-12 双进程修正后，在当前本地题库新增「双泊对照 · 双进程交互」并从网页提交正确示例，三个测试点全部 AC。首个测试点时间线验证：分别分发 a/b → 角色 0 发出排序序列 → 原样转发到角色 1 → 角色 1 发出 1 → 转发到角色 0 → 角色 0 发出 1。截图保存在 `artifacts/screenshots/multiset-relay.jpg`。原有题目与历史提交未被覆盖。
 
 ## 验收边界
 

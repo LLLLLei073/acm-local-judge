@@ -43,6 +43,7 @@ public record Problem
     public List<TestData> Tests { get; set; } = [];
     public string ExampleSource { get; set; } = "";
     public string WrongSource { get; set; } = "";
+    public CommunicationFlow? Flow { get; set; }
     public void Validate()
     {
         if (Limits is null || JudgeLimits is null || Tests is null || Statement is null || Checker is null || Interactor is null || Manager is null || ExampleSource is null || WrongSource is null || Protocol is null || FirstMarker is null || SecondMarker is null)
@@ -61,7 +62,8 @@ public record Problem
         if (FirstMarker.Length > 128 || SecondMarker.Length > 128 || FirstMarker.Any(char.IsWhiteSpace) || SecondMarker.Any(char.IsWhiteSpace) || FirstMarker.Length == 0 || SecondMarker.Length == 0 || FirstMarker == SecondMarker) throw new InvalidDataException("轮次标记必须是不同的非空 token");
         if (Mode == JudgeMode.Special && string.IsNullOrWhiteSpace(Checker)) throw new InvalidDataException("特判需要 checker");
         if (Mode == JudgeMode.Interactive && string.IsNullOrWhiteSpace(Interactor)) throw new InvalidDataException("交互题需要 interactor");
-        if ((Mode == JudgeMode.Multiprocess || Mode == JudgeMode.Communication && ManagedCommunication) && string.IsNullOrWhiteSpace(Manager)) throw new InvalidDataException("此模式需要 manager");
+        Flow?.Validate(this);
+        if ((Mode == JudgeMode.Multiprocess && Flow?.Enabled != true || Mode == JudgeMode.Communication && ManagedCommunication) && string.IsNullOrWhiteSpace(Manager)) throw new InvalidDataException("此模式需要 manager");
         if (new[] { Checker, Interactor, Manager, ExampleSource, WrongSource }.Any(x => x.Length > 1024 * 1024)) throw new InvalidDataException("单份源码不能超过 1 MiB");
     }
 }

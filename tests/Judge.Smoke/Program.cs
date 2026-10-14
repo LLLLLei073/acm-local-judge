@@ -50,8 +50,8 @@ string managed = "#include \"acm_manager.hpp\"\n#include <fstream>\nint main(){a
 Assert((await Run("managed-communication", comm with { ManagedCommunication=true, Manager=managed }, comm.ExampleSource)).Status == "AC", "manager 双轮通信");
 Assert((await Run("managed-invalid-order", comm with { ManagedCommunication=true, Manager="#include \"acm_manager.hpp\"\nint main(){acm::receive();acm::start();acm::start();}" }, "#include <windows.h>\nint main(){Sleep(10000);}")).Status == "Judge Error", "禁止并行启动通信轮次");
 var multi = Examples.All()[4];
-Assert((await Run("multi-one-fails", multi, "#include <iostream>\n#include <cstdlib>\nint main(int n,char**a){if(atoi(a[1])==1)return 7;int x;std::cin>>x;std::cout<<x*x<<std::endl;}")).Status == "RE", "多进程任一异常失败");
-Assert((await Run("multi-one-timeout", multi with { Limits=new(){CpuMs=100,WallMs=1000} }, "#include <iostream>\n#include <cstdlib>\nint main(int n,char**a){if(atoi(a[1])==1)for(;;){asm volatile(\"\");}int x;std::cin>>x;std::cout<<x*x<<std::endl;}")).Status == "TLE", "多进程任一超时失败");
+Assert((await Run("multi-one-fails", multi, multi.ExampleSource.Replace("int n;", "if(role == 1)return 7; int n;"))).Status == "RE", "多进程任一异常失败");
+Assert((await Run("multi-one-timeout", multi with { Limits=new(){CpuMs=100,WallMs=1000} }, multi.ExampleSource.Replace("int n;", "if(role == 1)for(;;){asm volatile(\"\");} int n;"))).Status == "TLE", "多进程任一超时失败");
 Assert((await Run("manager-protocol-error", multi with { Manager="#include <iostream>\nint main(){std::cout<<\"not json\"<<std::endl;}" }, multi.ExampleSource)).Status == "Judge Error", "非法 manager 协议");
 Assert((await Run("standard-ignores-checker", standard with { Checker="int main(){return 0;}" }, Examples.Wrong)).Status == "WA", "标准题不能被 checker 绕过");
 Console.WriteLine($"FINAL ALL {passed} PASSED; evidence: {work}");

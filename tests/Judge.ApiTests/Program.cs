@@ -65,6 +65,18 @@ try
 {
     await Start();
     Assert((await Request("GET","/problems")).AsArray().Count==5,"five seeded examples");
+    var flowProblem = FlowExample.Create();
+    flowProblem.Id = (await Request("POST", "/problems", flowProblem))["id"]!.GetValue<string>();
+    Assert((await Request("GET", "/problems/" + flowProblem.Id))["flow"]!["steps"]!.AsArray().Count == 5, "API persists visual flow");
+    string flowSubmission = (await Request("POST", "/submissions", new { problemId = flowProblem.Id, source = flowProblem.ExampleSource }))["id"]!.GetValue<string>();
+    Assert((await Wait(flowSubmission))["result"]!["status"]!.GetValue<string>() == "AC", "Worker executes visual flow");
+    flowProblem.Flow!.Steps[3].Expected = new() { Text = "999" };
+    await Request("PUT", "/problems/" + flowProblem.Id, flowProblem);
+    string flowRepeat = (await Request("POST", "/submissions/" + flowSubmission + "/rejudge"))["id"]!.GetValue<string>();
+    Assert((await Wait(flowRepeat))["result"]!["status"]!.GetValue<string>() == "AC", "rejudge freezes flow and expected values");
+    flowProblem.Flow.Steps[0].To = 99;
+    using (var invalidFlow = await client.PostAsJsonAsync("/api/problems", flowProblem, Json.Options))
+        Assert(invalidFlow.StatusCode == HttpStatusCode.BadRequest, "API rejects missing flow member");
     var p=Examples.All()[0] with {Id="",Title="API acceptance",Tests=[new("01","20 22\n","42\n")]};
     var created=await Request("POST","/problems",p);p.Id=created["id"]!.GetValue<string>();
     Assert(p.Id.Length==32,"create problem");

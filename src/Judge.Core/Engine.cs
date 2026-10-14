@@ -6,7 +6,7 @@ using System.Threading.Channels;
 
 namespace Judge.Core;
 
-public sealed class Engine(JudgeRequest request, Action<JudgeResult>? progress = null)
+public sealed partial class Engine(JudgeRequest request, Action<JudgeResult>? progress = null)
 {
     private readonly JudgeResult result = new();
     private Problem P => request.Problem;
@@ -31,7 +31,7 @@ public sealed class Engine(JudgeRequest request, Action<JudgeResult>? progress =
             var tools = new List<(string, string)>();
             if (P.Mode == JudgeMode.Special || P.Mode == JudgeMode.Interactive || P.Mode == JudgeMode.Communication && !P.ManagedCommunication) tools.Add(("checker", P.Checker));
             if (P.Mode == JudgeMode.Interactive) tools.Add(("interactor", P.Interactor));
-            if (P.Mode == JudgeMode.Multiprocess || P.Mode == JudgeMode.Communication && P.ManagedCommunication) tools.Add(("manager", P.Manager));
+            if (P.Mode == JudgeMode.Multiprocess && P.Flow?.Enabled != true || P.Mode == JudgeMode.Communication && P.ManagedCommunication) tools.Add(("manager", P.Manager));
             foreach (var (name, source) in tools)
                 if (!string.IsNullOrWhiteSpace(source) && !await Compile(name, source, true, token)) return result;
             result.Status = "Running"; Publish();
@@ -45,6 +45,7 @@ public sealed class Engine(JudgeRequest request, Action<JudgeResult>? progress =
                 var c = P.Mode switch
                 {
                     JudgeMode.Interactive => await Interactive(test, dir, token),
+                    JudgeMode.Multiprocess when P.Flow?.Enabled == true => await RunFlow(test, dir, token),
                     JudgeMode.Multiprocess => await Managed(test, dir, token),
                     JudgeMode.Communication when P.ManagedCommunication => await Managed(test, dir, token),
                     _ => await Batch(test, dir, token)

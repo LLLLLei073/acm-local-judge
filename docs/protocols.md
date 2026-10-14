@@ -1,5 +1,7 @@
 # 题目包与判题协议 v1
 
+多进程题支持可选的 `flow.version=1` 成员与步骤配置。`flow.enabled=true` 时不要求 manager.cpp，执行可视化流程；未启用时原协议不变。字段、行边界和校验规则见 [可视化通信流程](communication-flow.md)。
+
 ## ZIP 题目包
 
 ```text
@@ -51,7 +53,7 @@ interactor 参数为输入、交互记录文件、标准答案。stdin 接收选
 
 ## manager 通道
 
-manager 是可信 C++23 判题程序，使用 `#include "acm_manager.hpp"`。manager 的 stdin/stdout 是 **UTF-8 JSON Lines 控制通道**，stderr 用作诊断；不要向 stdout 打印调试文字。SDK 提供 JSON 解析、Base64 和显式 flush。每行最多 64KiB，数据分块发送，单块建议不超过 8KiB。
+manager 是可信 C++23 判题程序，使用 `#include "acm_manager.hpp"`。manager 的 stdin/stdout 是 **UTF-8 JSON Lines 控制通道**，stderr 用作诊断；不要向 stdout 打印调试文字。SDK 提供 JSON 解析、Base64 和显式 flush。每条内部 JSON 消息最多 64KiB；acm::send 自动按 8KiB 原始字节分块。选手的一行可以远超 64KiB，分块不会添加换行或修改内容。
 
 manager 从工作目录运行，命令参数为输入和答案文件。首个 stdin 事件：
 
@@ -83,31 +85,19 @@ manager → 引擎：
 
 通信 manager 的 processCount 为 1、id 恒为 0；先 `start` 第一轮，再收集输出和 exit，然后 `start` 第二轮。不允许同时启动两轮或第三次启动。引擎自动向每轮 stdin 写入其轮次标记与换行，其他输入由 manager 的 send 提供。只有完成两轮才允许 AC。无需第二轮读取第一轮目录；manager 应显式转发其需要的字节。
 
-不能假定一次 output 是完整的一行或一个 token。对每个 id/round 拼接片段，使用 exit 作为该实例输出结束标记；多进程事件可以交错。发送最终判定后 manager 应正常退出。引擎仍检查选手正常退出与资源限制，不接受忽略选手超限的 AC。
+不能假定一次 output 是完整的一行或一个 token。对每个 id/round 拼接片段，**实时解析题目协议所需的行或字段并转发**；exit 只表示该实例全部输出已结束。不要等进程退出才转发：进程可能正在等另一角色的回复。多进程事件可以交错。发送最终判定后 manager 应正常退出。引擎仍检查选手正常退出与资源限制，不接受忽略选手超限的 AC。
 
-```cpp
-#include "acm_manager.hpp"
-#include <fstream>
-int main() {
-    auto init = acm::receive();
-    std::ifstream in(init["inputPath"].get<std::string>());
-    int x;
-    if (!(in >> x)) { acm::verdict("Judge Error", "input unavailable"); return 0; }
-    acm::send(0, std::to_string(x) + "\n");
-    acm::close(0);
-    std::string answer;
-    for (;;) {
-        auto e = acm::receive();
-        if (e["type"] == "eof") return 3;
-        if (e["type"] == "output" && e["id"] == 0) answer += acm::decode(e["data"]);
-        if (e["type"] == "exit" && e["id"] == 0) break;
-    }
-    // 对实际题目应处理所有实例并校验答案；这里只展示 SDK 用法。
-    acm::verdict(answer.empty() ? "WA" : "AC", "example verdict");
-}
-```
 
-完整可运行的多进程 manager 在内置「并行求和」题目的判题程序页；管理器双轮通信范例也由原生测试覆盖。
+
+完整的角色间往返通信见内置「双泊对照」题目的判题程序页，以及 [MultisetExample.cs](../src/Judge.Core/MultisetExample.cs)：
+
+1. manager 读取测试文件，分别向角色 0/1 发送 n+a / n+b，保持两边输入打开。
+2. 收到角色 0 的两行输出后，校验 n 与排序后的 a，并原样转发给角色 1。
+3. 收到角色 1 的最终 0/1 后校验正确性，原样转发给角色 0。
+4. 收到角色 0 的最终 0/1 后，确认它与角色 1 一致且正确。
+5. 检查两边完整输出、正常退出及资源限制。缺失结果、额外输出、排序错误或答案错误均不能通过。
+
+这是同时运行的两个进程，通过调度器双向通信；与通信题依次启动两轮不同。无需选手包含 manager SDK，也不会向选手 stdin 注入 JSON。Windows 文本模式可能输出 CRLF，转发保留实际字节。该示例支持 n=200000、64 位数值和跨多个 output 事件的长行，测试位于 tests/Judge.MultiprocessTests。
 
 ## HTTP API
 

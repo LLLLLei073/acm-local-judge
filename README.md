@@ -28,9 +28,11 @@ powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -SkipBuild
 6. 「提交记录」可查看原源码及结果，按原题目、测试数据和工具头文件快照重评。
 7. 题目右上角可导出 ZIP；左侧「导入题目包」先预览，确认后创建新题目。
 
-内置标准求和、浮点特判、即时加倍交互、双轮通信、多进程平方和五道示例。每道题都带正确及错误程序。正确示例加载到编辑器后仍可自行修改，草稿按题目保存在浏览器本地。
+内置标准求和、浮点特判、即时加倍交互、双轮通信、双泊对照五道示例。双泊对照由两个角色通过调度器往返交互，双方最终答案都必须正确。每道题都带正确及错误程序。正确示例加载到编辑器后仍可自行修改，草稿按题目保存在浏览器本地。
 
 ## 评测语义
+
+多进程题可在「编辑题目 → 成员与通信」管理成员、拖动步骤、设置数据来源和输出校验，自动生成题面通信样例。勾选「用此流程执行评测」即可替代本题 manager；复杂分支和算法判定仍使用 C++ manager。导入 `examples/VisualFlow.zip` 可体验五步往返协议，详见 [可视化通信流程](docs/communication-flow.md)。
 
 | 类型 | 协议 | 资源汇总 |
 |---|---|---|
@@ -45,6 +47,8 @@ powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -SkipBuild
 编译参数固定 `-std=c++23 -O2 -pipe`，判题工具额外包含 `toolkit` 目录。每次记录实际 GCC 版本。C++23 的具体标准库功能支持由安装的 GCC 决定。
 
 CPU 为实例所属 Job 的用户态 + 内核态时间，包含其线程；内存为 **Windows 提交内存峰值**，不是 Linux RSS。CPU 通过约 10ms 周期检查，并在退出后再核算；极短程序的读数存在系统计时粒度。墙钟独立限制读写等待；不提供自动 flush。
+
+多进程题的同一份程序同时运行多个角色，由调度器分发各自输入、双向转发消息、按协议判定。选手只需读取角色编号、使用普通 stdin/stdout；JSON/Base64 只用于调度器与引擎之间。「双泊对照」的完整题面、选手程序和调度器见 [MultisetExample.cs](src/Judge.Core/MultisetExample.cs)。已有本地题库不会因源码更新自动覆盖；可导入新版 [Multiprocess.zip](examples/Multiprocess.zip)。
 
 默认：选手 2000ms CPU / 10000ms 墙钟 / 256MiB / stdout+stderr 16MiB；编译 60s / 1GiB / 日志 1MiB；判题工具 10000ms CPU / 512MiB。交互与 manager 的墙钟至少覆盖整个选手会话。多进程数 2–16。
 
