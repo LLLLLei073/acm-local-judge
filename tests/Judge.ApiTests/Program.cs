@@ -104,6 +104,46 @@ try
     {
         form.Add(new ByteArrayContent(exported),"file","problem.zip");var r=await client.PostAsync("/api/packages/preview",form);r.EnsureSuccessStatusCode();var imported=Json.Read<Problem>(await r.Content.ReadAsStringAsync());
         string importedId=(await Request("POST","/problems",imported))["id"]!.GetValue<string>();Assert(importedId!=p.Id,"import always creates new problem");
+    // 并行评测：设置校验、真并发、并发上限
+    string compilerPath=ServerSettings.Compiler(evidence);
+    using(var bad=new HttpRequestMessage(HttpMethod.Put,"/api/settings"){Content=new StringContent(Json.Write(new Dictionary<string,string>{["compiler"]=compilerPath,["parallelism"]="9"}),Encoding.UTF8,"application/json")})
+        Assert((await client.SendAsync(bad)).StatusCode==HttpStatusCode.BadRequest,"settings reject parallelism out of range");
+    await Request("PUT","/settings",new Dictionary<string,string>{["compiler"]=compilerPath,["parallelism"]="3"});
+    Assert((await Request("GET","/environment"))["parallelism"]!.GetValue<int>()==3,"environment reports parallelism");
+    var sleeper=Examples.All()[0] with {Id="",Title="Parallel check",Limits=new(){CpuMs=5000,WallMs=20000},Tests=[new("01","1\n","42\n")]};
+    sleeper.Id=(await Request("POST","/problems",sleeper))["id"]!.GetValue<string>();
+    string sleeperSource="#include <thread>\n#include <chrono>\n#include <iostream>\nint main(){std::this_thread::sleep_for(std::chrono::milliseconds(1500));std::cout<<42<<std::endl;}";
+    static bool Dispatched(string status)=>status is "Compiling" or "Running";
+    string first=(await Request("POST","/submissions",new{problemId=sleeper.Id,source=sleeperSource}))["id"]!.GetValue<string>();
+    string second=(await Request("POST","/submissions",new{problemId=sleeper.Id,source=sleeperSource}))["id"]!.GetValue<string>();
+    bool overlap=false;
+    for(int i=0;i<200;i++)
+    {
+        string st1=(await Request("GET","/submissions/"+first))["submission"]!["status"]!.GetValue<string>();
+        string st2=(await Request("GET","/submissions/"+second))["submission"]!["status"]!.GetValue<string>();
+        if(Dispatched(st1)&&Dispatched(st2)){overlap=true;break;}
+        if(!JudgeQueue.IsActive(st1)&&!JudgeQueue.IsActive(st2))break;
+        await Task.Delay(100);
+    }
+    Assert(overlap,"two submissions run concurrently");
+    Assert((await Wait(first))["result"]!["status"]!.GetValue<string>()=="AC","parallel sleeper A returns AC");
+    Assert((await Wait(second))["result"]!["status"]!.GetValue<string>()=="AC","parallel sleeper B returns AC");
+    await Request("PUT","/settings",new Dictionary<string,string>{["compiler"]=compilerPath,["parallelism"]="1"});
+    string solo=(await Request("POST","/submissions",new{problemId=sleeper.Id,source=sleeperSource}))["id"]!.GetValue<string>();
+    string follower=(await Request("POST","/submissions",new{problemId=sleeper.Id,source=sleeperSource}))["id"]!.GetValue<string>();
+    bool violated=false;bool followerStarted=false;
+    for(int i=0;i<300;i++)
+    {
+        string st1=(await Request("GET","/submissions/"+solo))["submission"]!["status"]!.GetValue<string>();
+        string st2=(await Request("GET","/submissions/"+follower))["submission"]!["status"]!.GetValue<string>();
+        if(Dispatched(st1)&&st2!="Queued")violated=true;
+        if(Dispatched(st2)){followerStarted=true;break;}
+        if(!JudgeQueue.IsActive(st1)&&!JudgeQueue.IsActive(st2))break;
+        await Task.Delay(100);
+    }
+    Assert(!violated&&followerStarted,"parallelism 1 keeps later submission queued");
+    Assert((await Wait(solo))["result"]!["status"]!.GetValue<string>()=="AC","serial queue A returns AC");
+    Assert((await Wait(follower))["result"]!["status"]!.GetValue<string>()=="AC","serial queue B returns AC");
     }
     p.Limits=new(){CpuMs=30000,WallMs=40000};await Request("PUT","/problems/"+p.Id,p);
     string hang="#include <windows.h>\nint main(){Sleep(30000);}";

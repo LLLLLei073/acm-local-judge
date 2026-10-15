@@ -32,6 +32,14 @@ API / 包检查覆盖：五类 ZIP 往返、字段验证、目录越界、Window
 
 浏览器操作：导入 `examples/VisualFlow.zip`，编辑成员名称与步骤顺序，验证仍被引用的成员/消息受保护，编辑数据来源与片段并保存。Worker 真实评测两个测试点均 AC。把步骤 4 期望值改为 999 后返回 `WA：步骤 4`，恢复参考答案后重新 AC。
 
+## 并行评测验收（2026-10-15）
+
+调度层由严格串行改为并行派发：提交仍按顺序开始，可同时运行多个独立 Worker。并行评测数 1–8（默认 2），在「运行环境」设置或 `ACM_PARALLELISM` 配置，保存后对后续派发即时生效；每个提交的评测语义、取消、Judge Error、崩溃隔离与 SSE 推送不变。并发评测各自独立限额，会争抢 CPU，墙钟读数可能波动（已写入 README）。
+
+HTTP/API 回归 41 项（原 33 项 + 新增 8 项），独立数据目录、独立 27124 端口、真实 Worker：并行数超范围拒绝、environment 上报 parallelism、两份 1.5s 提交同时进入 Compiling/Running（真并发）、并行两份均 AC、并行数 1 时后提交保持 Queued 不重叠、串行两份依次 AC，以及原有取消、父进程死亡清理、重启 Interrupted、Origin 拒绝等回归。
+
+过程中发现并修复：`ChannelReader<T>.Count` 在 unbounded channel 上不受支持（会抛 NotSupportedException，导致 environment 接口 500），改为独立计数器统计排队数。
+
 本轮变更留在工作区，未提交或推送 GitHub。
 
 ## 浏览器验收

@@ -6,7 +6,7 @@ Windows 原生 C++23 本地测评工作台。Vue 3 + Monaco 前端，ASP.NET Cor
 
 双击项目根目录的 **`start.cmd`**。首次启动会安装前端依赖、构建服务并打开 **http://127.0.0.1:27123**。安装完成后网页和评测可以离线运行，不依赖 CDN。
 
-需要 Windows 10/11 x64、.NET 10 SDK、Node.js 22.12+、pnpm 11 和支持 C++23 的 MinGW-w64 GCC。当前默认编译器为 `D:\mingw64\bin\g++.exe`；可在网页左下角「运行环境」修改。
+需要 Windows 10/11 x64、.NET 10 SDK、Node.js 22.12+、pnpm 11 和支持 C++23 的 MinGW-w64 GCC。当前默认编译器为 `D:\mingw64\bin\g++.exe`；可在网页左下角「运行环境」修改。并行评测数（同时评测的提交数）也在此设置，范围 1–8、默认 2，保存后立即生效。
 
 ```powershell
 # 初次启动 / 源码更新后重新构建
@@ -52,7 +52,7 @@ CPU 为实例所属 Job 的用户态 + 内核态时间，包含其线程；内�
 
 默认：选手 2000ms CPU / 10000ms 墙钟 / 256MiB / stdout+stderr 16MiB；编译 60s / 1GiB / 日志 1MiB；判题工具 10000ms CPU / 512MiB。交互与 manager 的墙钟至少覆盖整个选手会话。多进程数 2–16。
 
-选手进程挂起创建、加入 Job 后恢复运行；关闭 Job 自动清理进程。选手每实例只允许一个 OS 进程，内部可用线程；多个协作实例由评测器启动。编译器允许必要的子进程。所有提交串行，普通错误后仍运行剩余测试点；最终取测试点顺序中首个非 AC，基础设施错误或取消单独处理。
+选手进程挂起创建、加入 Job 后恢复运行；关闭 Job 自动清理进程。选手每实例只允许一个 OS 进程，内部可用线程；多个协作实例由评测器启动。编译器允许必要的子进程。提交按顺序开始，可同时运行多个独立 Worker：并行评测数 1–8（默认 2），在「运行环境」设置，保存后立即生效，并发评测各自独立限额、会争抢 CPU，墙钟读数可能波动。单个提交内普通错误后仍运行剩余测试点；最终取测试点顺序中首个非 AC，基础设施错误或取消单独处理。
 
 状态：AC、WA、PE、CE、RE、TLE、MLE、OLE、Judge Error、Cancelled、Interrupted，以及 Queued/Compiling/Running。checker/interactor 的 0/1/2 退出码映射 AC/WA/PE，其他退出码或工具超限为 Judge Error；不支持部分分。manager 使用显式判定消息，并正常退出。
 
@@ -71,7 +71,7 @@ pnpm dev
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 ```
 
-自动测试使用真实 GCC 和 Windows Job Objects。日志、JSON 结果和临时数据库保存在 `artifacts/`，与 `data/` 分离。可用 `ACM_ROOT`、`ACM_DATA`、`ACM_COMPILER` 配置后端；`ACM_PORT` 可供隔离测试使用（生产启动脚本固定 27123）。同一数据目录只允许一个服务实例。
+自动测试使用真实 GCC 和 Windows Job Objects。日志、JSON 结果和临时数据库保存在 `artifacts/`，与 `data/` 分离。可用 `ACM_ROOT`、`ACM_DATA`、`ACM_COMPILER`、`ACM_PARALLELISM` 配置后端；`ACM_PORT` 可供隔离测试使用（生产启动脚本固定 27123）。同一数据目录只允许一个服务实例。
 
 协议与格式详见 [协议文档](docs/protocols.md)，验收记录见 [验证报告](docs/verification.md)。
 

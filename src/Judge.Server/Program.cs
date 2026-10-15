@@ -29,17 +29,16 @@ app.Use(async (ctx, next) =>
     }
 });
 app.UseDefaultFiles(); app.UseStaticFiles();
-string Compiler()
+app.MapGet("/api/environment", (JudgeQueue q) =>
 {
-    var path = Path.Combine(data, "settings.json");
-    if (File.Exists(path)) return Json.Read<Dictionary<string,string>>(File.ReadAllText(path)).GetValueOrDefault("compiler", @"D:\mingw64\bin\g++.exe");
-    return Environment.GetEnvironmentVariable("ACM_COMPILER") ?? @"D:\mingw64\bin\g++.exe";
-}
-app.MapGet("/api/environment", () => new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler = Compiler(), compilerExists = File.Exists(Compiler()), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = "Windows 提交内存峰值", trustedOnly = true });
+    string compiler = ServerSettings.Compiler(data);
+    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler, compilerExists = File.Exists(compiler), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = "Windows 提交内存峰值", trustedOnly = true, parallelism = ServerSettings.Parallelism(data), judging = q.Running, queued = q.Queued };
+});
 app.MapPut("/api/settings", (Dictionary<string,string> values) =>
 {
     if (!values.TryGetValue("compiler", out var path) || !Path.IsPathFullyQualified(path) || !File.Exists(path) || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("请填写现有编译器 exe 的绝对路径");
-    File.WriteAllText(Path.Combine(data, "settings.json"), Json.Write(new { compiler = path })); return Results.Ok();
+    if (!values.TryGetValue("parallelism", out var raw) || !int.TryParse(raw, out var parallelism) || parallelism is < 1 or > ServerSettings.MaxParallelism) throw new InvalidDataException("并行评测数必须是 1–8 的整数");
+    ServerSettings.Save(data, path, parallelism); return Results.Ok();
 });
 app.MapGet("/api/problems", (Store s) => s.Problems().Select(p => new { p.Id, p.Title, p.Mode, p.Limits, testCount = p.Tests.Count }));
 app.MapGet("/api/problems/{id}", (string id, Store s) => s.Problem(id) ?? throw new KeyNotFoundException("题目不存在"));
@@ -78,7 +77,7 @@ app.MapGet("/api/submissions", (Store s) => s.Submissions());
 app.MapPost("/api/submissions", (SubmitBody body, Store s, JudgeQueue q) =>
 {
     var p = s.Problem(body.ProblemId) ?? throw new KeyNotFoundException("题目不存在");
-    var submission = s.AddSubmission(p, body.Source, Compiler()); q.Add(submission.Id); return submission;
+    var submission = s.AddSubmission(p, body.Source, ServerSettings.Compiler(data)); q.Add(submission.Id); return submission;
 });
 app.MapGet("/api/submissions/{id}", (string id, Store s) => new { submission = s.Submission(id) ?? throw new KeyNotFoundException("提交不存在"), result = s.Result(id), source = File.ReadAllText(Path.Combine(s.SubmissionDir(id), "source.cpp")) });
 app.MapGet("/api/submissions/{id}/logs", (string id, Store s) => s.Result(id));
