@@ -69,6 +69,15 @@ public static class ServerSettings
     // submission directories are only pruned when explicitly configured.
     public static int RetainProblemVersions(string data) => IntSetting(data, "retainProblemVersions", "ACM_RETAIN_PROBLEM_VERSIONS");
     public static int RetainSubmissions(string data) => IntSetting(data, "retainSubmissions", "ACM_RETAIN_SUBMISSIONS");
+
+    // When open, remote contestants may browse and submit without the admin token; management
+    // endpoints always require it. Default closed: remote access needs the token everywhere.
+    public static bool OjOpen(string data)
+    {
+        var settings = Read(data);
+        if (settings.TryGetValue("ojOpen", out var value)) return value == "1";
+        return Environment.GetEnvironmentVariable("ACM_OJ_OPEN") == "1";
+    }
     private static int IntSetting(string data, string key, string env)
     {
         var settings = Read(data);

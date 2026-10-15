@@ -38,19 +38,21 @@ app.Use(async (ctx, next) =>
             if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !allowed.Contains(ServerSettings.NormalizeHost(uri.Host), StringComparer.Ordinal)) { ctx.Response.StatusCode = 403; return; }
     var remote = ctx.Connection.RemoteIpAddress;
     bool local = remote != null && IPAddress.IsLoopback(remote);
-    bool authRequired = Environment.GetEnvironmentVariable("ACM_AUTH") == "required" || !local;
     var path = ctx.Request.Path;
-    if (authRequired && path.StartsWithSegments("/api") && !path.StartsWithSegments("/api/auth"))
+    bool admin = IsAdminRequest(ctx.Request);
+    string header = ctx.Request.Headers.Authorization.ToString();
+    string? provided = header.StartsWith("Bearer ") ? header[7..].Trim() : ctx.Request.Cookies[ServerSettings.CookieName];
+    bool tokenOk = provided != null && FixedTimeEquals(provided, token);
+    // Management endpoints always demand the token; contestant endpoints stay open to remote visitors
+    // only while the OJ is explicitly opened. ACM_AUTH=required overrides both.
+    bool authRequired = Environment.GetEnvironmentVariable("ACM_AUTH") == "required" || !local && (!ServerSettings.OjOpen(data) || admin);
+    if (authRequired && path.StartsWithSegments("/api") && !path.StartsWithSegments("/api/auth") && !tokenOk)
     {
-        string header = ctx.Request.Headers.Authorization.ToString(); // absent header converts to null via StringValues; ToString() is always safe
-        string? provided = header.StartsWith("Bearer ") ? header[7..].Trim() : ctx.Request.Cookies[ServerSettings.CookieName];
-        if (provided == null || !FixedTimeEquals(provided, token))
-        {
-            ctx.Response.StatusCode = 401;
-            await ctx.Response.WriteAsJsonAsync(new { error = "需要访问令牌" }, ctx.RequestAborted);
-            return;
-        }
+        ctx.Response.StatusCode = 401;
+        await ctx.Response.WriteAsJsonAsync(new { error = "需要访问令牌" }, ctx.RequestAborted);
+        return;
     }
+    ctx.Items["acmAdmin"] = local || admin || tokenOk;
     if (path.Value == "/api/submissions" && ctx.Request.Method == HttpMethods.Post && ServerSettings.RateLimit(data) is > 0 and var limit && !SubmitLimiter.TryAccept(remote?.ToString() ?? "?", limit))
     {
         ctx.Response.StatusCode = 429;
@@ -65,6 +67,21 @@ app.Use(async (ctx, next) =>
     }
 });
 static bool FixedTimeEquals(string a, string b) => CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(a), Encoding.ASCII.GetBytes(b));
+// Judge-tool management surface: always token-guarded, even on an opened OJ.
+static bool IsAdminRequest(HttpRequest request)
+{
+    var path = request.Path.Value ?? "";
+    var method = request.Method;
+    if (path == "/api/problems") return method != HttpMethods.Get;
+    if (path.StartsWith("/api/problems/"))
+    {
+        if (method is "POST" or "PUT" or "DELETE") return true;
+        if (path.EndsWith("/export", StringComparison.Ordinal)) return true;
+    }
+    if (path.StartsWith("/api/packages")) return true;
+    if (path.EndsWith("/rejudge", StringComparison.Ordinal)) return true;
+    return path == "/api/settings";
+}
 app.UseDefaultFiles(); app.UseStaticFiles();
 app.MapGet("/healthz", (JudgeQueue q) => Results.Ok(new { status = "ok", judging = q.Running, queued = q.Queued }));
 app.MapPost("/api/auth", (AuthBody body, HttpContext ctx) =>
@@ -73,10 +90,11 @@ app.MapPost("/api/auth", (AuthBody body, HttpContext ctx) =>
     ctx.Response.Cookies.Append(ServerSettings.CookieName, token, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, MaxAge = TimeSpan.FromDays(30) });
     return Results.Ok();
 });
-app.MapGet("/api/environment", (JudgeQueue q) =>
+app.MapGet("/api/environment", (JudgeQueue q, HttpContext ctx) =>
 {
     string compiler = ServerSettings.Compiler(data);
-    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler, compilerExists = File.Exists(compiler), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = OperatingSystem.IsWindows() ? "Windows 提交内存峰值" : "Linux 提交内存峰值（RSS）", trustedOnly = true, parallelism = ServerSettings.Parallelism(data), judging = q.Running, queued = q.Queued };
+    bool admin = ctx.Items["acmAdmin"] is true;
+    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler = admin ? compiler : "", compilerExists = admin && File.Exists(compiler), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = OperatingSystem.IsWindows() ? "Windows 提交内存峰值" : "Linux 提交内存峰值（RSS）", trustedOnly = true, parallelism = ServerSettings.Parallelism(data), judging = q.Running, queued = q.Queued };
 });
 app.MapPut("/api/settings", (Dictionary<string,string> values) =>
 {
@@ -85,7 +103,11 @@ app.MapPut("/api/settings", (Dictionary<string,string> values) =>
     ServerSettings.Save(data, path, parallelism); return Results.Ok();
 });
 app.MapGet("/api/problems", (Store s) => s.Problems().Select(p => new { p.Id, p.Title, p.Mode, p.Limits, testCount = p.Tests.Count }));
-app.MapGet("/api/problems/{id}", (string id, Store s) => s.Problem(id) ?? throw new KeyNotFoundException("题目不存在"));
+app.MapGet("/api/problems/{id}", (string id, Store s, HttpContext ctx) =>
+{
+    var p = s.Problem(id) ?? throw new KeyNotFoundException("题目不存在");
+    return ctx.Items["acmAdmin"] is true ? p : PublicViews.Problem(p);
+});
 app.MapPost("/api/problems", (Problem p, Store s) => s.Save(p, true));
 app.MapPut("/api/problems/{id}", (string id, Problem p, Store s) => { p.Id = id; return s.Save(p, false); });
 app.MapDelete("/api/problems/{id}", (string id, Store s) => s.Delete(id) ? Results.NoContent() : Results.NotFound());

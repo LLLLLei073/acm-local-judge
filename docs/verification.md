@@ -80,3 +80,11 @@ HTTP/API 回归 41 项（原 33 项 + 新增 8 项），独立数据目录、独
 - 部署链路：`scripts/start.sh`、`scripts/verify.sh`、`deploy/judge.service`（Delegate=yes 委托 cgroup）、`docs/deploy.md`（Caddy/nginx 样例、环境变量表、令牌轮换、内存口径标定说明）。
 - 过程中修复：测试脚手架 `Start()` 重构时丢失 `server` 赋值导致误报 NRE 与孤儿进程；无 Authorization 头时 `Headers.Authorization` 隐式转换为 null 导致 500（改用 `ToString()`）；ready 探针改用免认证 `/healthz`；cancel 观察断言由固定 600ms 改为轮询（消除竞态）。
 - 回归：API 套件 41 → 55 项（WA 回显开关 ×2、认证/令牌/Cookie/Bearer、Host 白名单放行/拒绝、Origin 放行/拒绝、限流三连）。Windows 全量 verify 通过；Linux 真机行为由 `scripts/verify.sh` 在服务器验收（LinuxRunner 超限判定、netns 探测、cgroup 委托）。
+
+## OJ 端与管理员端拆分（2026-10-15）
+
+- 页面按路径拆分：`/` 选手 OJ 端（看题/提交/SSE 结果/历史/取消），`/admin` 管理员端（题目 CRUD、测试数据、判题程序、流程编辑、ZIP 导入导出、运行环境）。`main.ts` 按 pathname 挂载，无新前端依赖；共享逻辑抽到 `client.ts`（api/令牌状态/登录）。
+- 鉴权：管理 API（题目写操作、tests 上传、packages、settings、export、rejudge）一律要求令牌（回环本机仍免认证）；选手 API 受 `ACM_OJ_OPEN=1`（settings.json `ojOpen`）控制，默认关闭=远程全要令牌。
+- 数据脱敏：非管理员视角的题目详情只保留第一个测试点作为样例，其余测试点内容、checker/interactor/manager 源码、wrongSource、通信流程（内嵌期望值）全部剥离；`/api/environment` 对非管理员隐藏编译器路径。
+- API 回归 55 → 65：新增第三个实例（27126，`ACM_OJ_OPEN=1`，绑定 0.0.0.0 并经本机局域网 IP 模拟远程选手路径）——匿名列表/详情断言脱敏生效、匿名提交被接受、匿名 PUT/export/rejudge 均 401、管理员视角保留判题工具、匿名 environment 无编译器路径。
+- 过程修复：IsAdminRequest 中 rejudge 分类误嵌 problems 分支导致匿名可重评；测试 BaseAddress 与路径拼接产生 `//` 落入 GET-only fallback 返回 405。

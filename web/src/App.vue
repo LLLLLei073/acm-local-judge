@@ -6,6 +6,7 @@ import DOMPurify from 'dompurify';
 import FlowEditor from './FlowEditor.vue';
 import FlowPreview from './FlowPreview.vue';
 import { newFlow } from './flow';
+import { api, needsToken, token, loginRequest } from './client';
 const CodeEditor = defineAsyncComponent(() => import('./CodeEditor.vue'));
 import { modes, modeInfo, statusLabel, active, memory, blankProblem, type Problem, type ProblemSummary, type Submission, type Result, type Case } from './types';
 
@@ -16,7 +17,6 @@ const busy = ref(false), error = ref(''), notice = ref(''), showHistory = ref(fa
 const snapshotSource = ref(''), showSnapshot = ref(false);
 const draft = ref<Problem>(), editTab = ref('basic'), judgeTab = ref<'checker'|'interactor'|'manager'>('checker');
 const importPreview = ref<Problem>(), environment = ref<{ os: string; memoryMetric: string; compiler: string; compilerExists: boolean; workerReady: boolean; parallelism: number; judging: number; queued: number }>(), settings = ref(false), compiler = ref(''), parallelism = ref(2);
-const token = ref(localStorage.getItem('acm-token') ?? ''), needsToken = ref(false);
 let events: EventSource | undefined;
 const visible = computed(() => problems.value.filter(p => p.title.toLowerCase().includes(search.value.toLowerCase()) && (filter.value === 'all' || p.mode === filter.value)));
 const info = computed(() => selected.value ? modeInfo(selected.value.mode) : modes[0]);
@@ -27,24 +27,15 @@ const latest = computed(() => selected.value ? history.value.find(s => s.problem
 const currentCase = computed(() => result.value?.cases.find(c => c.name === expanded.value));
 const platformTag = computed(() => environment.value ? environment.value.os.split(' ')[0] : '本地运行');
 const decode = (value: string) => new TextDecoder().decode(Uint8Array.from(atob(value), c => c.charCodeAt(0)));
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch('/api' + url, { ...init, headers: init?.body instanceof FormData ? init.headers : { 'Content-Type': 'application/json', ...init?.headers } });
-  if (response.status === 401) { needsToken.value = true; throw new Error('需要访问令牌'); }
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || `请求失败 (${response.status})`); }
-  return response.status === 204 || response.headers.get('content-length') === '0' ? undefined as T : response.json();
-}
+async function perform(fn: () => Promise<void>) { error.value = ''; busy.value = true; try { await fn(); } catch (e) { error.value = e instanceof Error ? e.message : String(e); } finally { busy.value = false; } }
 async function login() {
   await perform(async () => {
-    const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token.value.trim() }) });
-    if (!response.ok) throw new Error('令牌不正确');
-    localStorage.setItem('acm-token', token.value.trim());
-    needsToken.value = false;
+    await loginRequest();
     await Promise.all([loadList(), loadHistory(), api<typeof environment.value>('/environment').then(x => environment.value = x)]);
     if (problems.value[0]) await select(problems.value[0].id);
     notice.value = '登录成功，评测机已就绪';
   });
 }
-async function perform(fn: () => Promise<void>) { error.value = ''; busy.value = true; try { await fn(); } catch (e) { error.value = e instanceof Error ? e.message : String(e); } finally { busy.value = false; } }
 async function loadList() { problems.value = await api('/problems'); }
 async function loadHistory() { history.value = await api('/submissions'); }
 async function select(id: string) {
@@ -153,7 +144,7 @@ onBeforeUnmount(() => { events?.close(); removeEventListener('beforeunload', pro
         </button>
         <p v-if="!visible.length" class="muted empty-small">没有匹配的题目</p>
       </div>
-      <div class="sidebar-bottom"><label class="side-import"><Upload :size="16" /> 导入题目包<input type="file" accept=".zip" hidden @change="importZip" /></label><button class="nav-item" @click="openSettings"><Settings2 :size="16" /> 运行环境</button><p><span class="local-dot"></span> 数据保存在测评机上</p></div>
+      <div class="sidebar-bottom"><label class="side-import"><Upload :size="16" /> 导入题目包<input type="file" accept=".zip" hidden @change="importZip" /></label><button class="nav-item" @click="openSettings"><Settings2 :size="16" /> 运行环境</button><a class="nav-item" href="/"><ArrowUpRight :size="16" /> 返回 OJ 端</a><p><span class="local-dot"></span> 数据保存在测评机上</p></div>
     </aside>
 
     <div class="main-shell">

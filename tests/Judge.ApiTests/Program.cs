@@ -34,7 +34,7 @@ using(var ms = new MemoryStream())
 }
 var serverDll=Path.Combine(root,"artifacts/server/Judge.Server.dll");
 const int port=27124;
-Process? server=null; Process? authServer=null;
+Process? server=null; Process? authServer=null; Process? ojServer=null;
 async Task<Process> Start(int serverPort=port, Dictionary<string,string>? extraEnv=null)
 {
     var si=new ProcessStartInfo("dotnet"){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
@@ -202,9 +202,55 @@ try
     Assert((await SubmitAuth()).StatusCode==HttpStatusCode.NotFound,"rate limit lets the second submission through");
     Assert((await SubmitAuth()).StatusCode==HttpStatusCode.TooManyRequests,"rate limit blocks the third submission");
     authServer.Kill();await authServer.WaitForExitAsync();authServer.Dispose();authServer=null;
+    // 开放的选手 OJ 端：匿名可读可提交（题目数据脱敏），管理操作仍需令牌。
+    // 绑定 0.0.0.0 并经本机局域网 IP 连接，让请求真正走"远程选手"路径（回环会被视为本机管理员）。
+    var lanIp=(await Dns.GetHostEntryAsync(Dns.GetHostName())).AddressList.FirstOrDefault(a=>a.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork&&!IPAddress.IsLoopback(a)) ?? throw new Exception("no LAN IPv4 for remote simulation");
+    ojServer=await Start(27126,new Dictionary<string,string>{["ACM_HOST"]="0.0.0.0",["ACM_OJ_OPEN"]="1",["ACM_ALLOWED_HOSTS"]="oj.example.edu,"+lanIp.ToString(),["ACM_TOKEN"]="oj-test-token",["ACM_DATA"]=Path.Combine(evidence,"oj-data")});
+    using var ojClient=new HttpClient(new HttpClientHandler{UseProxy=false}){BaseAddress=new Uri($"http://{lanIp}:27126"),Timeout=TimeSpan.FromSeconds(60)};
+    async Task<HttpResponseMessage> SendOj(string method,string path,string? host="oj.example.edu",string? bearer=null,object? body=null)
+    {
+        var req=new HttpRequestMessage(new HttpMethod(method),$"{ojClient.BaseAddress.ToString().TrimEnd('/')}{path}");
+        if(host!=null)req.Headers.Host=host; if(bearer!=null)req.Headers.Add("Authorization","Bearer "+bearer);
+        if(body!=null)req.Content=new StringContent(Json.Write(body),Encoding.UTF8,"application/json");
+        return await ojClient.SendAsync(req);
+    }
+    var ojProblem=Examples.All()[0] with {Id="",Title="OJ public view",Checker="int main(){return 0;}",Tests=[new("01","20 22\n","42\n"),new("02","40 44\n","84\n")]};
+    using(var okOj=await SendOj("POST","/api/problems",bearer:"oj-test-token",body:ojProblem))
+    {
+        okOj.EnsureSuccessStatusCode();
+        ojProblem.Id=JsonNode.Parse(await okOj.Content.ReadAsStringAsync())!["id"]!.GetValue<string>();
+    }
+    using(var anonList=await SendOj("GET","/api/problems"))
+        Assert(anonList.StatusCode==HttpStatusCode.OK,"opened OJ lists problems anonymously");
+    string anonDetail="";
+    using(var anonProblem=await SendOj("GET","/api/problems/"+ojProblem.Id))
+    {
+        Assert(anonProblem.StatusCode==HttpStatusCode.OK,"opened OJ shows problem detail anonymously");
+        anonDetail=await anonProblem.Content.ReadAsStringAsync();
+    }
+    var anonView=JsonNode.Parse(anonDetail)!;
+    Assert(anonView["checker"]!.GetValue<string>()==""&&anonView["wrongSource"]!.GetValue<string>()=="","public view strips judge tools and wrong source");
+    Assert(anonView["tests"]!.AsArray().Count==2&&anonView["tests"]![0]!["input"]!.GetValue<string>()=="20 22\n"&&anonView["tests"]![1]!["input"]!.GetValue<string>()==""&&anonView["tests"]![1]!["answer"]!.GetValue<string>()=="","public view keeps only the first test as sample");
+    using(var adminView=await SendOj("GET","/api/problems/"+ojProblem.Id,bearer:"oj-test-token"))
+        Assert(JsonNode.Parse(await adminView.Content.ReadAsStringAsync())!["checker"]!.GetValue<string>()=="int main(){return 0;}","admin view keeps judge tools");
+    using(var anonEnv=await SendOj("GET","/api/environment"))
+        Assert(JsonNode.Parse(await anonEnv.Content.ReadAsStringAsync())!["compiler"]!.GetValue<string>()=="","public view hides compiler path");
+    using(var ojSubmit=await SendOj("POST","/api/submissions",body:new{problemId=ojProblem.Id,source=Examples.Sum}))
+    {
+        ojSubmit.EnsureSuccessStatusCode();
+        string ojSubmission=JsonNode.Parse(await ojSubmit.Content.ReadAsStringAsync())!["id"]!.GetValue<string>();
+        Assert(ojSubmission.Length==32,"opened OJ accepts anonymous submissions");
+        using(var anonRejudge=await SendOj("POST","/api/submissions/"+ojSubmission+"/rejudge"))
+            Assert(anonRejudge.StatusCode==HttpStatusCode.Unauthorized,"rejudge rejects anonymous users");
+    }
+    using(var anonPut=await SendOj("PUT","/api/problems/"+ojProblem.Id,body:ojProblem))
+        Assert(anonPut.StatusCode==HttpStatusCode.Unauthorized,"management endpoints reject anonymous users");
+    using(var anonExport=await SendOj("GET","/api/problems/"+ojProblem.Id+"/export"))
+        Assert(anonExport.StatusCode==HttpStatusCode.Unauthorized,"export rejects anonymous users");
+    ojServer.Kill();await ojServer.WaitForExitAsync();ojServer.Dispose();ojServer=null;
     Assert((await Request("GET","/submissions")).AsArray().Count>=4,"history persisted after restart");
     await Request("DELETE","/problems/"+p.Id);Assert((await Request("GET","/submissions/"+id))["result"]!["status"]!.GetValue<string>()=="AC","deleting problem preserves submissions");
     Console.WriteLine($"ALL {checks.Count} API/PACKAGE CHECKS PASSED; {evidence}");
     File.WriteAllText(Path.Combine(evidence,"report.json"),Json.Write(new{passed=checks.Count,checks}));
 }
-finally { if(authServer is {HasExited:false}) {authServer.Kill(true);await authServer.WaitForExitAsync();} authServer?.Dispose(); if(server is {HasExited:false}) {server.Kill(true);await server.WaitForExitAsync();}server?.Dispose(); }
+finally { if(ojServer is {HasExited:false}) {ojServer.Kill(true);await ojServer.WaitForExitAsync();} ojServer?.Dispose(); if(authServer is {HasExited:false}) {authServer.Kill(true);await authServer.WaitForExitAsync();} authServer?.Dispose(); if(server is {HasExited:false}) {server.Kill(true);await server.WaitForExitAsync();}server?.Dispose(); }

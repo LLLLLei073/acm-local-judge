@@ -67,12 +67,21 @@ ACM_PARALLELISM=4
 | `ACM_ALLOWED_HOSTS` | 空 | 额外放行的 Host/Origin 域名，逗号分隔 |
 | `ACM_AUTH` | 自动 | `required` 强制所有请求（含回环）持令牌；默认仅远程要求 |
 | `ACM_TOKEN` | 自动生成 | 固定访问令牌；留空则首次启动生成并打印 |
+| `ACM_OJ_OPEN` | 关 | `1` 开放选手 OJ 端：远程访客免令牌浏览/提交，管理操作仍需令牌 |
 | `ACM_RATE_LIMIT` | `30` | 每 IP 每分钟可提交次数，`0` 关闭限流 |
 | `ACM_PARALLELISM` | `2` | 同时评测的提交数（1–8） |
 | `ACM_COMPILER` | 平台默认 | g++ 路径，默认 `/usr/bin/g++`，可被设置页覆盖 |
 | `ACM_CGROUP` | 开 | `0` 禁用 cgroup 会话（仅 rlimit） |
 | `ACM_CGROUP_DIR` | 自动探测 | 指定可写的 cgroup v2 委托目录 |
 | `ACM_NETWORK_ISOLATION` | 开 | `0` 关闭无特权网络 namespace 探测 |
+
+## OJ 端与管理员端
+
+页面按路径分两端：`/` 是选手 OJ 端（看题、提交、查结果），`/admin` 是管理员端（建题、测试数据、判题程序、导入导出、运行环境）。队员只需拿到站点地址即可练习；**令牌只交给管理员**。
+
+- 默认（`ACM_OJ_OPEN` 关）：远程访问任何 API 都要令牌，选手端页面也会要求登录。
+- `ACM_OJ_OPEN=1`：远程访客免令牌使用选手端，服务端自动对题目做脱敏——只保留第一个测试点作为样例，其余测试数据、checker/interactor/manager 源码、错误示例和通信流程期望值不会下发给选手；`/api/environment` 也不再暴露编译器路径。建题、改数据、导出、重评等管理操作无论何时都要令牌。
+- 提交记录全员可见（训练场景约定）；如需按人隔离，另起多套 `ACM_DATA` 目录多实例部署。
 
 访问令牌在首次启动时生成并打印到 stdout（`journalctl -u judge` 可查），同时持久化到 `data/settings.json`。**本机回环访问免认证**（方便管理员本机调试）；远程浏览器第一次打开页面会要求输入令牌，登录后以 HttpOnly Cookie 保持 30 天。
 
