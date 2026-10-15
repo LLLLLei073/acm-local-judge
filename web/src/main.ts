@@ -1,6 +1,5 @@
 import { createApp } from 'vue';
-import App from './App.vue';
 import OjPage from './OjPage.vue';
 import './style.css';
-// `/admin` 是管理员工作台，其余路径都是选手 OJ 端（服务端 MapFallbackToFile 保证路由可达）。
-createApp(location.pathname.startsWith('/admin') ? App : OjPage).mount('#app');
+// 选手 OJ 端入口；管理端是独立的 /admin 页面（admin.html），不在此打包。
+createApp(OjPage).mount('#app');

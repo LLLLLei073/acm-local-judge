@@ -38,7 +38,7 @@ Process? server=null; Process? authServer=null; Process? ojServer=null;
 async Task<Process> Start(int serverPort=port, Dictionary<string,string>? extraEnv=null)
 {
     var si=new ProcessStartInfo("dotnet"){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-    si.ArgumentList.Add(serverDll);si.Environment["ACM_ROOT"]=root;si.Environment["ACM_DATA"]=evidence;si.Environment["ACM_PORT"]=serverPort.ToString();
+    si.ArgumentList.Add(serverDll);si.Environment["ACM_ROOT"]=root;si.Environment["ACM_DATA"]=evidence;si.Environment["ACM_PORT"]=serverPort.ToString();si.Environment["ACM_TOKEN"]="main-test-token";
     if(extraEnv!=null) foreach(var (k,v) in extraEnv) si.Environment[k]=v;
     var process=Process.Start(si)!;
     if (serverPort==port) server=process;
@@ -66,6 +66,24 @@ async Task<JsonNode> Wait(string id,string? until=null)
 try
 {
     await Start();
+    // 管理端双重验证：管理 API 即使回环也要令牌；/admin 页面未登录只见登录门，登录后才下发控制台
+    using(var noAuth=new HttpRequestMessage(HttpMethod.Post,"/api/problems"){Content=new StringContent("{}",Encoding.UTF8,"application/json")})
+        Assert((await client.SendAsync(noAuth)).StatusCode==HttpStatusCode.Unauthorized,"management API requires token even on loopback");
+    using(var gate=await client.GetAsync("/admin"))
+    {
+        string gateHtml=await gate.Content.ReadAsStringAsync();
+        Assert(gate.StatusCode==HttpStatusCode.OK&&gateHtml.Contains("/api/auth")&&!gateHtml.Contains("id=\"app\""),"/admin serves a login gate before authentication");
+    }
+    using(var loginOk=await client.PostAsync("/api/auth",new StringContent(Json.Write(new{token="main-test-token"}),Encoding.UTF8,"application/json")))
+        Assert(loginOk.StatusCode==HttpStatusCode.OK,"admin login with startup token");
+    using(var adminPage=await client.GetAsync("/admin"))
+    {
+        string page=await adminPage.Content.ReadAsStringAsync();
+        Assert(adminPage.StatusCode==HttpStatusCode.OK&&page.Contains("id=\"app\""),"admin console served after login");
+    }
+    using(var rawClient=new HttpClient(new HttpClientHandler{UseProxy=false,AllowAutoRedirect=false}){BaseAddress=client.BaseAddress})
+    using(var rawRedirect=await rawClient.GetAsync("/admin.html"))
+        Assert(rawRedirect.StatusCode==HttpStatusCode.Found,"raw admin.html redirects into the gated route");
     Assert((await Request("GET","/problems")).AsArray().Count==5,"five seeded examples");
     var flowProblem = FlowExample.Create();
     flowProblem.Id = (await Request("POST", "/problems", flowProblem))["id"]!.GetValue<string>();

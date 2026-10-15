@@ -25,7 +25,27 @@ var app = builder.Build();
 var token = ServerSettings.Token(data);
 Console.WriteLine($"ACM Local Judge: http://{bindHost}:{port}");
 Console.WriteLine($"API 访问令牌：{token}");
-Console.WriteLine("远程访问需在登录框输入此令牌；本机回环访问免认证。");
+Console.WriteLine("远程访问需在登录框输入此令牌；管理端 /admin 始终需要令牌。");
+// Served for /admin until the visitor presents a valid token; the admin console itself never
+// reaches an unauthenticated browser.
+const string AdminLoginPage = """
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ACM 管理端 · 登录</title><style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0e1220;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#e8eaf2}
+.card{width:340px;padding:36px 32px;border-radius:14px;background:#171c2e;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+h1{font-size:19px;margin:0 0 6px}.sub{font-size:12.5px;color:#8b93ad;margin:0 0 22px;line-height:1.6}
+input{width:100%;box-sizing:border-box;padding:11px 13px;border-radius:9px;border:1px solid #2c3350;background:#0e1220;color:#e8eaf2;font-size:14px;margin-bottom:14px}
+button{width:100%;padding:11px;border:0;border-radius:9px;background:#3267cd;color:#fff;font-size:14px;cursor:pointer}
+button:hover{background:#3d75de}.err{color:#ff7a7a;font-size:13px;min-height:18px;margin:0 0 8px}
+.hint{font-size:12px;color:#5d6480;margin-top:18px;line-height:1.6}
+</style></head><body><div class="card"><h1>ACM 管理端</h1><p class="sub">管理控制台需要访问令牌。</p>
+<p class="err" id="msg"></p><input id="t" type="password" autocomplete="off" placeholder="访问令牌" autofocus>
+<button onclick="go()">登 录</button>
+<p class="hint">令牌在服务启动日志中打印，也保存在 data/settings.json。登录后本浏览器 30 天内免重复输入。</p></div>
+<script>function go(){var t=document.getElementById('t').value;fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})}).then(function(r){if(r.ok){location.href='/admin';}else{document.getElementById('msg').textContent='令牌不正确，请重试';}}).catch(function(){document.getElementById('msg').textContent='网络错误';});}
+document.getElementById('t').addEventListener('keydown',function(e){if(e.key==='Enter')go();});</script></body></html>
+""";
 // A reverse proxy on the same host is the expected TLS terminus; trust it for client IPs only.
 app.UseForwardedHeaders(new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions { ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto, KnownProxies = { IPAddress.Loopback, IPAddress.IPv6Loopback } });
 app.Use(async (ctx, next) =>
@@ -43,16 +63,27 @@ app.Use(async (ctx, next) =>
     string header = ctx.Request.Headers.Authorization.ToString();
     string? provided = header.StartsWith("Bearer ") ? header[7..].Trim() : ctx.Request.Cookies[ServerSettings.CookieName];
     bool tokenOk = provided != null && FixedTimeEquals(provided, token);
-    // Management endpoints always demand the token; contestant endpoints stay open to remote visitors
-    // only while the OJ is explicitly opened. ACM_AUTH=required overrides both.
-    bool authRequired = Environment.GetEnvironmentVariable("ACM_AUTH") == "required" || !local && (!ServerSettings.OjOpen(data) || admin);
+    // The admin console is a separate, always-authenticated surface: both /admin itself and every
+    // management API demand the token, loopback included. Contestant endpoints follow the OJ switch.
+    if (path.Value is "/admin" or "/admin/")
+    {
+        if (ctx.Request.Method != HttpMethods.Get) { ctx.Response.StatusCode = 405; return; }
+        var adminPage = Path.Combine(root, "web", "dist", "admin.html");
+        if (!tokenOk) { ctx.Response.ContentType = "text/html; charset=utf-8"; await ctx.Response.WriteAsync(AdminLoginPage, ctx.RequestAborted); return; }
+        if (!File.Exists(adminPage)) { ctx.Response.StatusCode = 503; await ctx.Response.WriteAsync("管理端前端尚未构建：请在 web 目录执行 pnpm build", ctx.RequestAborted); return; }
+        ctx.Response.ContentType = "text/html; charset=utf-8";
+        await ctx.Response.SendFileAsync(adminPage, ctx.RequestAborted);
+        return;
+    }
+    if (path == "/admin.html") { ctx.Response.Redirect("/admin"); return; }
+    bool authRequired = admin || Environment.GetEnvironmentVariable("ACM_AUTH") == "required" || !local && !ServerSettings.OjOpen(data);
     if (authRequired && path.StartsWithSegments("/api") && !path.StartsWithSegments("/api/auth") && !tokenOk)
     {
         ctx.Response.StatusCode = 401;
         await ctx.Response.WriteAsJsonAsync(new { error = "需要访问令牌" }, ctx.RequestAborted);
         return;
     }
-    ctx.Items["acmAdmin"] = local || admin || tokenOk;
+    ctx.Items["acmAdmin"] = tokenOk;
     if (path.Value == "/api/submissions" && ctx.Request.Method == HttpMethods.Post && ServerSettings.RateLimit(data) is > 0 and var limit && !SubmitLimiter.TryAccept(remote?.ToString() ?? "?", limit))
     {
         ctx.Response.StatusCode = 429;
@@ -67,6 +98,7 @@ app.Use(async (ctx, next) =>
     }
 });
 static bool FixedTimeEquals(string a, string b) => CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(a), Encoding.ASCII.GetBytes(b));
+
 // Judge-tool management surface: always token-guarded, even on an opened OJ.
 static bool IsAdminRequest(HttpRequest request)
 {

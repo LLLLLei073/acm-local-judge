@@ -1,3 +1,7 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
-export default defineConfig({ plugins: [vue()], server: { proxy: { '/api': 'http://127.0.0.1:27123' } } });
+export default defineConfig({
+  plugins: [vue()],
+  server: { proxy: { '/api': 'http://127.0.0.1:27123' } },
+  build: { rollupOptions: { input: { main: 'index.html', admin: 'admin.html' } } },
+});

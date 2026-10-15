@@ -88,3 +88,9 @@ HTTP/API 回归 41 项（原 33 项 + 新增 8 项），独立数据目录、独
 - 数据脱敏：非管理员视角的题目详情只保留第一个测试点作为样例，其余测试点内容、checker/interactor/manager 源码、wrongSource、通信流程（内嵌期望值）全部剥离；`/api/environment` 对非管理员隐藏编译器路径。
 - API 回归 55 → 65：新增第三个实例（27126，`ACM_OJ_OPEN=1`，绑定 0.0.0.0 并经本机局域网 IP 模拟远程选手路径）——匿名列表/详情断言脱敏生效、匿名提交被接受、匿名 PUT/export/rejudge 均 401、管理员视角保留判题工具、匿名 environment 无编译器路径。
 - 过程修复：IsAdminRequest 中 rejudge 分类误嵌 problems 分支导致匿名可重评；测试 BaseAddress 与路径拼接产生 `//` 落入 GET-only fallback 返回 405。
+
+### 管理端强制登录（2026-10-15 追加）
+
+- 双入口彻底分离：前端改为多页构建（`index.html` 选手端 / `admin.html` 管理端，各自独立 bundle）；选手页面移除管理入口，管理端不再回链选手端。
+- `/admin` 由服务端把守：未持令牌（**含本机回环**）只返回内嵌令牌登录页，登录后才下发管理控制台；裸 `admin.html` 302 回 `/admin`。管理 API 同样一律要求令牌（原"回环免认证"仅保留给选手端）。`acmAdmin` 视角改为仅由有效令牌决定。
+- 回归 65 → 70：回环管理 API 无令牌 401、未登录 `/admin` 是登录门、登录后下发控制台、裸 admin.html 重定向、令牌登录成功。

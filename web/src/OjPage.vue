@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch } from 'vue';
-import { Search, ChevronRight, Code2, BookOpen, History, Check, X, Terminal, ArrowUpRight, RefreshCw, Play, Square, Upload, Settings2, Layers, AlertCircle, ChevronDown } from 'lucide-vue-next';
+import { Search, ChevronRight, Code2, BookOpen, History, Check, X, Terminal, ArrowUpRight, RefreshCw, Play, Square, Upload, Layers, AlertCircle, ChevronDown } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { api, needsToken, token, loginRequest } from './client';
@@ -96,7 +96,7 @@ onBeforeUnmount(() => { events?.close(); removeEventListener('beforeunload', pro
         </button>
         <p v-if="!visible.length" class="muted empty-small">没有匹配的题目</p>
       </div>
-      <div class="sidebar-bottom"><a class="nav-item" href="/admin"><Settings2 :size="16" /> 管理员入口</a><p><span class="local-dot"></span> 提交即表示同意仅用于学习训练</p></div>
+      <div class="sidebar-bottom"><p><span class="local-dot"></span> 提交即表示同意仅用于学习训练</p></div>
     </aside>
 
     <div class="main-shell">

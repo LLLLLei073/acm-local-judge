@@ -131,8 +131,8 @@ onBeforeUnmount(() => { events?.close(); removeEventListener('beforeunload', pro
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <a class="brand" href="/" aria-label="ACM 测评机首页"><span class="brand-mark"><Terminal :size="21" /></span><span>ACM<span class="brand-sub">LOCAL JUDGE</span></span><span class="version">01</span></a>
-      <div class="side-label">你的训练空间<span class="local-dot"></span></div>
+      <a class="brand" href="/admin" aria-label="ACM 管理控制台"><span class="brand-mark"><Terminal :size="21" /></span><span>ACM<span class="brand-sub">ADMIN</span></span><span class="version">01</span></a>
+      <div class="side-label">管理控制台<span class="local-dot"></span></div>
       <button class="nav-item selected" @click="showHistory=false"><Layers :size="17" /> 题目工作台 <span>{{ problems.length }}</span></button>
       <button class="nav-item" @click="showHistory=true; loadHistory()"><History :size="17" /> 提交记录 <ArrowUpRight :size="14" class="push" /></button>
       <div class="library-title"><span>本地题库</span><button class="icon-btn" aria-label="新建题目" @click="edit()"><Plus :size="17" /></button></div>
@@ -144,7 +144,7 @@ onBeforeUnmount(() => { events?.close(); removeEventListener('beforeunload', pro
         </button>
         <p v-if="!visible.length" class="muted empty-small">没有匹配的题目</p>
       </div>
-      <div class="sidebar-bottom"><label class="side-import"><Upload :size="16" /> 导入题目包<input type="file" accept=".zip" hidden @change="importZip" /></label><button class="nav-item" @click="openSettings"><Settings2 :size="16" /> 运行环境</button><a class="nav-item" href="/"><ArrowUpRight :size="16" /> 返回 OJ 端</a><p><span class="local-dot"></span> 数据保存在测评机上</p></div>
+      <div class="sidebar-bottom"><label class="side-import"><Upload :size="16" /> 导入题目包<input type="file" accept=".zip" hidden @change="importZip" /></label><button class="nav-item" @click="openSettings"><Settings2 :size="16" /> 运行环境</button><p><span class="local-dot"></span> 数据保存在测评机上</p></div>
     </aside>
 
     <div class="main-shell">
