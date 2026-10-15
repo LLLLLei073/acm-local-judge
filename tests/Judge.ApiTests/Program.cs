@@ -34,17 +34,19 @@ using(var ms = new MemoryStream())
 }
 var serverDll=Path.Combine(root,"artifacts/server/Judge.Server.dll");
 const int port=27124;
-Process? server=null;
-async Task Start()
+Process? server=null; Process? authServer=null;
+async Task<Process> Start(int serverPort=port, Dictionary<string,string>? extraEnv=null)
 {
     var si=new ProcessStartInfo("dotnet"){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-    si.ArgumentList.Add(serverDll);si.Environment["ACM_ROOT"]=root;si.Environment["ACM_DATA"]=evidence;si.Environment["ACM_PORT"]=port.ToString();
-    server=Process.Start(si)!;
-    server.OutputDataReceived+=(_,e)=> { if(e.Data!=null) File.AppendAllText(Path.Combine(evidence,"server.log"),e.Data+"\n"); };
-    server.ErrorDataReceived+=(_,e)=> { if(e.Data!=null) File.AppendAllText(Path.Combine(evidence,"server-error.log"),e.Data+"\n"); };
-    server.BeginOutputReadLine();server.BeginErrorReadLine();
+    si.ArgumentList.Add(serverDll);si.Environment["ACM_ROOT"]=root;si.Environment["ACM_DATA"]=evidence;si.Environment["ACM_PORT"]=serverPort.ToString();
+    if(extraEnv!=null) foreach(var (k,v) in extraEnv) si.Environment[k]=v;
+    var process=Process.Start(si)!;
+    if (serverPort==port) server=process;
+    process.OutputDataReceived+=(_,e)=> { if(e.Data!=null) File.AppendAllText(Path.Combine(evidence,$"server-{serverPort}.log"),e.Data+"\n"); };
+    process.ErrorDataReceived+=(_,e)=> { if(e.Data!=null) File.AppendAllText(Path.Combine(evidence,$"server-error-{serverPort}.log"),e.Data+"\n"); };
+    process.BeginOutputReadLine();process.BeginErrorReadLine();
     using var probe=new HttpClient(new HttpClientHandler{UseProxy=false});
-    for(int i=0;i<100;i++) { if(server.HasExited)throw new Exception("Server exited");try{if((await probe.GetAsync($"http://127.0.0.1:{port}/api/environment")).IsSuccessStatusCode)return;}catch(HttpRequestException){} await Task.Delay(100); }
+    for(int i=0;i<100;i++) { if(process.HasExited)throw new Exception("Server exited");try{if((await probe.GetAsync($"http://127.0.0.1:{serverPort}/healthz")).IsSuccessStatusCode)return process;}catch(HttpRequestException){} await Task.Delay(100); }
     throw new Exception("Server not ready");
 }
 using var client=new HttpClient(new HttpClientHandler{UseProxy=false}){BaseAddress=new Uri($"http://127.0.0.1:{port}"),Timeout=TimeSpan.FromSeconds(120)};
@@ -159,8 +161,9 @@ try
     string cancel=(await Request("POST","/submissions",new{problemId=p.Id,source=hang}))["id"]!.GetValue<string>();
     Assert((await Wait(cancel,"Running"))["submission"]!["status"]!.GetValue<string>()=="Running","cancel fixture reaches running");
     await Request("POST","/submissions/"+cancel+"/cancel");Assert((await Wait(cancel))["result"]!["status"]!.GetValue<string>()=="Cancelled","cancel running submission");
-    await Task.Delay(600);
-    var cancelResult=Json.Read<JudgeResult>(File.ReadAllText(Path.Combine(evidence,"submissions",cancel,"result.json")));Assert(cancelResult.Status=="Cancelled","worker observes cancellation");
+    var cancelResult=new JudgeResult();
+    for(int i=0;i<100;i++){cancelResult=Json.Read<JudgeResult>(File.ReadAllText(Path.Combine(evidence,"submissions",cancel,"result.json")));if(cancelResult.Status=="Cancelled")break;await Task.Delay(100);}
+    Assert(cancelResult.Status=="Cancelled","worker observes cancellation");
     string interrupted=(await Request("POST","/submissions",new{problemId=p.Id,source=hang}))["id"]!.GetValue<string>();await Wait(interrupted,"Running");
     // Kill only the server itself: the Worker must notice parent death and release its Jobs.
     server!.Kill();await server.WaitForExitAsync();await Task.Delay(1000);
@@ -168,9 +171,40 @@ try
     await Start();
     Assert((await Request("GET","/submissions/"+interrupted))["result"]!["status"]!.GetValue<string>()=="Interrupted","restart marks interrupted submission");
     using(var req=new HttpRequestMessage(HttpMethod.Post,"/api/submissions")){req.Headers.Add("Origin","https://example.org");req.Content=new StringContent("{}",Encoding.UTF8,"application/json");Assert((await client.SendAsync(req)).StatusCode==HttpStatusCode.Forbidden,"reject foreign browser origin");}
+    // 远程访问安全面：独立实例强制认证 + Host 白名单 + 提交限流（隔离 data 目录，避开 server.lock）
+    authServer=await Start(27125,new Dictionary<string,string>{["ACM_AUTH"]="required",["ACM_RATE_LIMIT"]="2",["ACM_ALLOWED_HOSTS"]="judge.example.com",["ACM_TOKEN"]="unit-test-token",["ACM_DATA"]=Path.Combine(evidence,"auth-data")});
+    using var authClient=new HttpClient(new HttpClientHandler{UseProxy=false}){BaseAddress=new Uri("http://127.0.0.1:27125"),Timeout=TimeSpan.FromSeconds(30)};
+    async Task<HttpResponseMessage> Send(string method,string path,string? host=null,string? origin=null,string? bearer=null)
+    {
+        var req=new HttpRequestMessage(new HttpMethod(method),"http://127.0.0.1:27125"+path);
+        if(host!=null)req.Headers.Host=host; if(origin!=null)req.Headers.Add("Origin",origin); if(bearer!=null)req.Headers.Add("Authorization","Bearer "+bearer);
+        return await authClient.SendAsync(req);
+    }
+    Assert((await Send("GET","/api/problems")).StatusCode==HttpStatusCode.Unauthorized,"remote request without token is rejected");
+    using(var wrongAuth=new HttpRequestMessage(HttpMethod.Post,"http://127.0.0.1:27125/api/auth"){Content=new StringContent(Json.Write(new{token="bad"}),Encoding.UTF8,"application/json")})
+        Assert((await authClient.SendAsync(wrongAuth)).StatusCode==HttpStatusCode.Unauthorized,"wrong token rejected");
+    using(var okAuth=new HttpRequestMessage(HttpMethod.Post,"http://127.0.0.1:27125/api/auth"){Content=new StringContent(Json.Write(new{token="unit-test-token"}),Encoding.UTF8,"application/json")})
+        Assert((await authClient.SendAsync(okAuth)).StatusCode==HttpStatusCode.OK,"correct token sets session cookie");
+    Assert((await Send("GET","/api/problems")).StatusCode==HttpStatusCode.OK,"session cookie grants API access");
+    Assert((await Send("GET","/api/problems",bearer:"unit-test-token")).StatusCode==HttpStatusCode.OK,"bearer token grants access");
+    Assert((await Send("GET","/api/problems",host:"judge.example.com")).StatusCode==HttpStatusCode.OK,"allowlisted host accepted");
+    Assert((await Send("GET","/api/problems",host:"evil.example.net")).StatusCode==HttpStatusCode.Forbidden,"unknown host rejected");
+    Assert((await Send("GET","/api/problems",origin:"https://judge.example.com")).StatusCode==HttpStatusCode.OK,"allowlisted origin accepted");
+    Assert((await Send("GET","/api/problems",origin:"https://evil.example.net")).StatusCode==HttpStatusCode.Forbidden,"foreign origin rejected");
+    async Task<HttpResponseMessage> SubmitAuth()
+    {
+        var req=new HttpRequestMessage(HttpMethod.Post,"http://127.0.0.1:27125/api/submissions");
+        req.Headers.Host="judge.example.com";
+        req.Content=new StringContent(Json.Write(new{problemId="does-not-exist",source="int main(){}"}),Encoding.UTF8,"application/json");
+        return await authClient.SendAsync(req);
+    }
+    Assert((await SubmitAuth()).StatusCode==HttpStatusCode.NotFound,"rate limit lets the first submissions through");
+    Assert((await SubmitAuth()).StatusCode==HttpStatusCode.NotFound,"rate limit lets the second submission through");
+    Assert((await SubmitAuth()).StatusCode==HttpStatusCode.TooManyRequests,"rate limit blocks the third submission");
+    authServer.Kill();await authServer.WaitForExitAsync();authServer.Dispose();authServer=null;
     Assert((await Request("GET","/submissions")).AsArray().Count>=4,"history persisted after restart");
     await Request("DELETE","/problems/"+p.Id);Assert((await Request("GET","/submissions/"+id))["result"]!["status"]!.GetValue<string>()=="AC","deleting problem preserves submissions");
     Console.WriteLine($"ALL {checks.Count} API/PACKAGE CHECKS PASSED; {evidence}");
     File.WriteAllText(Path.Combine(evidence,"report.json"),Json.Write(new{passed=checks.Count,checks}));
 }
-finally { if(server is {HasExited:false}) {server.Kill(true);await server.WaitForExitAsync();}server?.Dispose(); }
+finally { if(authServer is {HasExited:false}) {authServer.Kill(true);await authServer.WaitForExitAsync();} authServer?.Dispose(); if(server is {HasExited:false}) {server.Kill(true);await server.WaitForExitAsync();}server?.Dispose(); }

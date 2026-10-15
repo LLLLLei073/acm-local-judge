@@ -68,3 +68,15 @@ HTTP/API 回归 41 项（原 33 项 + 新增 8 项），独立数据目录、独
 - WA 默认不再回显期望 token，题目级 `revealExpected` 开启回显；API 回归增至 43 项（默认隐藏 + 显式开启）。
 - 测试 fixtures 全部去 Windows 化（`std::this_thread::sleep_for` 替代 `Sleep`，字节级输出片段保留 `_WIN32` 分支）。
 - 验收：Windows 全量 verify 通过（Smoke + Multiprocess + 43 项 API + 36 项 Flow + 前端构建）。Linux 会话在 Windows 上仅编译验证（本机无 WSL/Docker）；Linux 真机行为由 `scripts/verify.sh` 在服务器上验收（LinuxRunner 的 TLE/MLE/OLE、netns 探测、cgroup 委托）。
+
+## 网络层与运维（2026-10-15）
+
+- 可配置绑定 `ACM_HOST`（默认 127.0.0.1）+ Host/Origin 域名白名单（`ACM_ALLOWED_HOSTS` / `settings.json allowedHosts`），替换原先"非回环一律 403"的墙。
+- Bearer/Cookie 访问令牌：首启自动生成并打印，`ACM_TOKEN` 可固定；回环免认证保持本机体验，`ACM_AUTH=required` 强制全认证；`POST /api/auth` 换取 HttpOnly Cookie（SameSite=Strict，30 天）；SSE 经 EventSource 自动携带 Cookie。前端新增令牌登录弹窗，localStorage 记忆。
+- 提交限流：按 IP 固定窗口，`ACM_RATE_LIMIT`（默认 30/分钟，0 关闭），超限 429。
+- `GET /healthz` 存活探针（免认证，返回 judging/queued 计数）。
+- 文件日志按天写入 `data/logs/`（框架日志仅 Warning+）；磁盘保留策略 `ACM_RETAIN_PROBLEM_VERSIONS` / `ACM_RETAIN_SUBMISSIONS`，后台每 6 小时清理。
+- `ForwardedHeaders`（仅信任回环代理）保证限流与远程判定在反代后取真实客户端 IP；.NET 10 中 `ForwardedHeadersOptions` 位于 `Microsoft.AspNetCore.Builder`。
+- 部署链路：`scripts/start.sh`、`scripts/verify.sh`、`deploy/judge.service`（Delegate=yes 委托 cgroup）、`docs/deploy.md`（Caddy/nginx 样例、环境变量表、令牌轮换、内存口径标定说明）。
+- 过程中修复：测试脚手架 `Start()` 重构时丢失 `server` 赋值导致误报 NRE 与孤儿进程；无 Authorization 头时 `Headers.Authorization` 隐式转换为 null 导致 500（改用 `ToString()`）；ready 探针改用免认证 `/healthz`；cancel 观察断言由固定 600ms 改为轮询（消除竞态）。
+- 回归：API 套件 41 → 55 项（WA 回显开关 ×2、认证/令牌/Cookie/Bearer、Host 白名单放行/拒绝、Origin 放行/拒绝、限流三连）。Windows 全量 verify 通过；Linux 真机行为由 `scripts/verify.sh` 在服务器验收（LinuxRunner 超限判定、netns 探测、cgroup 委托）。

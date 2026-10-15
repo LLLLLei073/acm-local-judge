@@ -1,0 +1,24 @@
+[Unit]
+Description=ACM Local Judge (C++23)
+After=network.target
+
+[Service]
+Type=exec
+User=judge
+Group=judge
+WorkingDirectory=/opt/acm-judge
+Environment=ACM_ROOT=/opt/acm-judge
+Environment=ACM_HOST=127.0.0.1
+Environment=ACM_PORT=27123
+# 可选：域名白名单、并行度、固定令牌等写进 deploy/judge.env（EnvironmentFile），避免改 unit
+EnvironmentFile=-/opt/acm-judge/deploy/judge.env
+ExecStart=/usr/bin/dotnet /opt/acm-judge/artifacts/server/Judge.Server.dll
+Restart=on-failure
+RestartSec=3
+# 委托 cgroup 子树，评测会话才能拿到独立 cgroup（memory.max/pids.max/cgroup.kill）
+Delegate=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

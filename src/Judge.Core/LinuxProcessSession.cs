@@ -242,6 +242,20 @@ internal sealed class LinuxProcessSession : SandboxSession
         if (Environment.GetEnvironmentVariable("ACM_CGROUP") == "0") return null;
         var custom = Environment.GetEnvironmentVariable("ACM_CGROUP_DIR");
         if (custom != null) return Cgroup.Test(custom) ? custom : null;
+        // Prefer this unit's own delegated directory (systemd Delegate=yes), then the bare root (root-run).
+        try
+        {
+            foreach (var line in File.ReadLines("/proc/self/cgroup"))
+            {
+                int split = line.IndexOf("::");
+                if (split < 0) continue;
+                var relative = line[(split + 2)..].Trim('/');
+                if (relative.Length == 0) break;
+                var own = Path.Combine("/sys/fs/cgroup", relative);
+                if (Cgroup.Test(own)) return own;
+            }
+        }
+        catch { }
         var fs = "/sys/fs/cgroup";
         return File.Exists(Path.Combine(fs, "cgroup.controllers")) && Cgroup.Test(fs) ? fs : null;
     }

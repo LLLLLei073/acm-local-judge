@@ -16,7 +16,11 @@ powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -SkipBuild
 ```
 
-保留服务终端，按 Ctrl+C 结束服务。若服务已启动，再次运行启动脚本会打开现有网页。端口只监听回环地址，不提供局域网或公网访问。
+保留服务终端，按 Ctrl+C 结束服务。若服务已启动，再次运行启动脚本会打开现有网页。端口默认只监听回环地址；Linux 服务器部署（systemd 常驻 + 反向代理 HTTPS + 访问令牌）见 [部署指南](docs/deploy.md)。
+
+## 服务器访问与令牌
+
+服务启动时生成（或读取）**访问令牌**并打印在启动日志，同时持久化到 `data/settings.json`。本机回环访问免认证；远程访问（经反向代理）必须在页面登录框输入令牌，之后以 HttpOnly Cookie 保持 30 天。相关配置：`ACM_HOST`（监听地址）、`ACM_ALLOWED_HOSTS`（放行的 Host/Origin 域名白名单）、`ACM_TOKEN`（固定令牌）、`ACM_AUTH=required`（强制回环也认证）、`ACM_RATE_LIMIT`（每 IP 每分钟提交上限，默认 30，0 关闭）。`GET /healthz` 提供存活探针（无认证）。
 
 ## 使用
 
@@ -69,15 +73,18 @@ pnpm dev
 
 # 全部自动验收；先关闭正在运行的服务，避免锁定发布文件
 powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
+
+# Linux 服务器上的等价验收
+bash scripts/verify.sh
 ```
 
-自动测试使用真实 GCC 和 Windows Job Objects。日志、JSON 结果和临时数据库保存在 `artifacts/`，与 `data/` 分离。可用 `ACM_ROOT`、`ACM_DATA`、`ACM_COMPILER`、`ACM_PARALLELISM` 配置后端；`ACM_PORT` 可供隔离测试使用（生产启动脚本固定 27123）。同一数据目录只允许一个服务实例。
+自动测试使用真实 GCC 和系统沙箱（Windows Job Objects / Linux rlimit+cgroups）。日志、JSON 结果和临时数据库保存在 `artifacts/`，与 `data/` 分离。运行日志同时按天写入 `data/logs/judge-YYYYMMDD.log`（Microsoft 框架日志仅记录 Warning 以上）。可用 `ACM_ROOT`、`ACM_DATA`、`ACM_COMPILER`、`ACM_PARALLELISM`、`ACM_HOST`、`ACM_PORT`、`ACM_TOKEN`、`ACM_ALLOWED_HOSTS`、`ACM_AUTH`、`ACM_RATE_LIMIT` 配置后端。磁盘保留策略默认关闭：`ACM_RETAIN_PROBLEM_VERSIONS` / `ACM_RETAIN_SUBMISSIONS` 设为正整数后，后台每 6 小时清理超出的历史版本与已完结提交。同一数据目录只允许一个服务实例。
 
 协议与格式详见 [协议文档](docs/protocols.md)，验收记录见 [验证报告](docs/verification.md)。
 
 ## 边界
 
-面向本机可信代码训练。Job Objects 限制资源与管理进程，**不隔离文件、注册表和网络**；新轮次只保证分配的工作目录全新。请勿用于运行陌生来源的恶意程序，也不要将服务反向代理到公网。没有账号、排行榜、比赛、部分分或外部 OJ 包格式兼容。
+面向可信代码训练（本机个人使用，或校队/班级经服务器部署使用）。沙箱限制资源并管理进程树：Windows 不隔离文件、注册表和网络；Linux 在 cgroup/namespace 可用时收紧进程与内存边界，并尽力用网络 namespace 断网。**请勿用于运行陌生来源的恶意程序**；远程部署务必经反向代理启用 HTTPS 并保管好访问令牌。没有账号、排行榜、比赛、部分分或外部 OJ 包格式兼容。
 
 首次安装可能需要联网；启动失败会保留终端错误。若编译成功而程序提示缺失 MinGW DLL，请确认编译器同目录包含对应运行库。Monaco 编辑器按需加载，首次切换代码页会比题面稍慢。
 

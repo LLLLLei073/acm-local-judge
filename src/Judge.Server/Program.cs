@@ -1,3 +1,6 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Judge.Core;
@@ -9,18 +12,51 @@ Directory.CreateDirectory(data);
 using var instanceLock = new FileStream(Path.Combine(data, "server.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 int port = int.TryParse(Environment.GetEnvironmentVariable("ACM_PORT"), out var configuredPort) ? configuredPort : 27123;
 if (port is < 1024 or > 65535) throw new InvalidDataException("ACM_PORT 必须是 1024–65535");
+var host = ServerSettings.NormalizeHost(Environment.GetEnvironmentVariable("ACM_HOST") ?? "127.0.0.1");
+var bindHost = host.Contains(':') ? $"[{host}]" : host;
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, WebRootPath = Path.Combine(root, "web", "dist") });
-builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+builder.WebHost.UseUrls($"http://{bindHost}:{port}");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 90 * 1024 * 1024);
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => o.MultipartBodyLengthLimit = Packages.MaxBytes);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
-builder.Services.AddSingleton(new Store(root, data)); builder.Services.AddSingleton<JudgeQueue>(); builder.Services.AddHostedService(sp => sp.GetRequiredService<JudgeQueue>());
+builder.Services.AddSingleton(new Store(root, data)); builder.Services.AddSingleton<JudgeQueue>(); builder.Services.AddHostedService(sp => sp.GetRequiredService<JudgeQueue>()); builder.Services.AddHostedService<Retention>();
+builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(data, "logs")));
 var app = builder.Build();
+var token = ServerSettings.Token(data);
+Console.WriteLine($"ACM Local Judge: http://{bindHost}:{port}");
+Console.WriteLine($"API 访问令牌：{token}");
+Console.WriteLine("远程访问需在登录框输入此令牌；本机回环访问免认证。");
+// A reverse proxy on the same host is the expected TLS terminus; trust it for client IPs only.
+app.UseForwardedHeaders(new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions { ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto, KnownProxies = { IPAddress.Loopback, IPAddress.IPv6Loopback } });
 app.Use(async (ctx, next) =>
 {
-    // Local host/origin checks stop arbitrary websites from submitting native code to the local service.
-    if (ctx.Request.Host.Host is not ("127.0.0.1" or "localhost")) { ctx.Response.StatusCode = 403; return; }
-    if (ctx.Request.Headers.Origin is { Count: > 0 } origins && !origins.All(o => o == $"http://127.0.0.1:{port}" || o == $"http://localhost:{port}" || o == "http://127.0.0.1:5173")) { ctx.Response.StatusCode = 403; return; }
+    // Host/origin allowlist replaces the old loopback-only wall; token auth guards remote API use.
+    var allowed = ServerSettings.AllowedHosts(data);
+    if (!allowed.Contains(ServerSettings.NormalizeHost(ctx.Request.Host.Host), StringComparer.Ordinal)) { ctx.Response.StatusCode = 403; return; }
+    if (ctx.Request.Headers.Origin is { Count: > 0 } origins)
+        foreach (var origin in origins)
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !allowed.Contains(ServerSettings.NormalizeHost(uri.Host), StringComparer.Ordinal)) { ctx.Response.StatusCode = 403; return; }
+    var remote = ctx.Connection.RemoteIpAddress;
+    bool local = remote != null && IPAddress.IsLoopback(remote);
+    bool authRequired = Environment.GetEnvironmentVariable("ACM_AUTH") == "required" || !local;
+    var path = ctx.Request.Path;
+    if (authRequired && path.StartsWithSegments("/api") && !path.StartsWithSegments("/api/auth"))
+    {
+        string header = ctx.Request.Headers.Authorization.ToString(); // absent header converts to null via StringValues; ToString() is always safe
+        string? provided = header.StartsWith("Bearer ") ? header[7..].Trim() : ctx.Request.Cookies[ServerSettings.CookieName];
+        if (provided == null || !FixedTimeEquals(provided, token))
+        {
+            ctx.Response.StatusCode = 401;
+            await ctx.Response.WriteAsJsonAsync(new { error = "需要访问令牌" }, ctx.RequestAborted);
+            return;
+        }
+    }
+    if (path.Value == "/api/submissions" && ctx.Request.Method == HttpMethods.Post && ServerSettings.RateLimit(data) is > 0 and var limit && !SubmitLimiter.TryAccept(remote?.ToString() ?? "?", limit))
+    {
+        ctx.Response.StatusCode = 429;
+        await ctx.Response.WriteAsJsonAsync(new { error = "提交过于频繁，请稍后再试" }, ctx.RequestAborted);
+        return;
+    }
     try { await next(); }
     catch (Exception ex) when (ex is InvalidDataException or JsonException or ArgumentException or KeyNotFoundException)
     {
@@ -28,7 +64,15 @@ app.Use(async (ctx, next) =>
         ctx.Response.StatusCode = ex is KeyNotFoundException ? 404 : 400; await ctx.Response.WriteAsJsonAsync(new { error = ex.Message });
     }
 });
+static bool FixedTimeEquals(string a, string b) => CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(a), Encoding.ASCII.GetBytes(b));
 app.UseDefaultFiles(); app.UseStaticFiles();
+app.MapGet("/healthz", (JudgeQueue q) => Results.Ok(new { status = "ok", judging = q.Running, queued = q.Queued }));
+app.MapPost("/api/auth", (AuthBody body, HttpContext ctx) =>
+{
+    if (body.Token == null || !FixedTimeEquals(body.Token, token)) { ctx.Response.StatusCode = 401; return Results.Json(new { error = "令牌不正确" }, statusCode: 401); }
+    ctx.Response.Cookies.Append(ServerSettings.CookieName, token, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, MaxAge = TimeSpan.FromDays(30) });
+    return Results.Ok();
+});
 app.MapGet("/api/environment", (JudgeQueue q) =>
 {
     string compiler = ServerSettings.Compiler(data);
@@ -105,3 +149,22 @@ app.MapGet("/api/submissions/{id}/events", async (string id, HttpContext ctx, St
 app.MapFallbackToFile("index.html");
 await app.RunAsync();
 record SubmitBody(string ProblemId, string Source);
+record AuthBody(string? Token);
+
+// Fixed-window per-IP limiter for submission floods; entries age out lazily.
+internal static class SubmitLimiter
+{
+    private static readonly Dictionary<string, (DateTime Window, int Count)> windows = [];
+    public static bool TryAccept(string key, int limitPerMinute)
+    {
+        lock (windows)
+        {
+            var now = DateTime.UtcNow;
+            if (windows.Count > 10_000) foreach (var k in windows.Where(w => now - w.Value.Window >= TimeSpan.FromMinutes(1)).Select(w => w.Key).ToList()) windows.Remove(k);
+            if (!windows.TryGetValue(key, out var entry) || now - entry.Window >= TimeSpan.FromMinutes(1)) { windows[key] = (now, 1); return true; }
+            if (entry.Count >= limitPerMinute) return false;
+            windows[key] = (entry.Window, entry.Count + 1);
+            return true;
+        }
+    }
+}

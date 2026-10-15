@@ -73,6 +73,15 @@ public sealed class Store
         using var db = Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT * FROM submissions ORDER BY createdAt DESC LIMIT 200";
         using var r = cmd.ExecuteReader(); List<Submission> list = []; while (r.Read()) list.Add(new(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<JudgeMode>(r.GetString(3)), r.GetString(4), DateTimeOffset.Parse(r.GetString(5)))); return list;
     }
+    public List<Submission> AllSubmissions()
+    {
+        using var db = Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT * FROM submissions ORDER BY createdAt DESC";
+        using var r = cmd.ExecuteReader(); List<Submission> list = []; while (r.Read()) list.Add(new(r.GetString(0), r.GetString(1), r.GetString(2), Enum.Parse<JudgeMode>(r.GetString(3)), r.GetString(4), DateTimeOffset.Parse(r.GetString(5)))); return list;
+    }
+    public void DeleteSubmission(string id)
+    {
+        using var db = Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "DELETE FROM submissions WHERE id=$id"; cmd.Parameters.AddWithValue("$id", id); cmd.ExecuteNonQuery();
+    }
     public Submission? Submission(string id)
     {
         using var db = Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT * FROM submissions WHERE id=$id"; cmd.Parameters.AddWithValue("$id", id);
