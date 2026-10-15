@@ -32,11 +32,11 @@ app.UseDefaultFiles(); app.UseStaticFiles();
 app.MapGet("/api/environment", (JudgeQueue q) =>
 {
     string compiler = ServerSettings.Compiler(data);
-    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler, compilerExists = File.Exists(compiler), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = "Windows 提交内存峰值", trustedOnly = true, parallelism = ServerSettings.Parallelism(data), judging = q.Running, queued = q.Queued };
+    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler, compilerExists = File.Exists(compiler), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = OperatingSystem.IsWindows() ? "Windows 提交内存峰值" : "Linux 提交内存峰值（RSS）", trustedOnly = true, parallelism = ServerSettings.Parallelism(data), judging = q.Running, queued = q.Queued };
 });
 app.MapPut("/api/settings", (Dictionary<string,string> values) =>
 {
-    if (!values.TryGetValue("compiler", out var path) || !Path.IsPathFullyQualified(path) || !File.Exists(path) || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("请填写现有编译器 exe 的绝对路径");
+    if (!values.TryGetValue("compiler", out var path) || !Path.IsPathFullyQualified(path) || !File.Exists(path) || OperatingSystem.IsWindows() && !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("请填写现有编译器的绝对路径");
     if (!values.TryGetValue("parallelism", out var raw) || !int.TryParse(raw, out var parallelism) || parallelism is < 1 or > ServerSettings.MaxParallelism) throw new InvalidDataException("并行评测数必须是 1–8 的整数");
     ServerSettings.Save(data, path, parallelism); return Results.Ok();
 });

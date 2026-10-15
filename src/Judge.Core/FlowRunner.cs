@@ -112,7 +112,7 @@ public sealed partial class Engine
                         try { actual = new UTF8Encoding(false, true).GetString(bytes); }
                         catch (DecoderFallbackException) { throw new FlowFailure("WA", "输出不是有效 UTF-8"); }
                         var expected = new UTF8Encoding(false, true).GetString(step.Expected.Resolve(test, messages));
-                        var check = Compare(actual, expected);
+                        var check = Compare(actual, expected, P.RevealExpected);
                         if (check.Verdict != "AC") throw new FlowFailure(check.Verdict, check.Message);
                     }
                     messages.Add(step.Id, bytes);

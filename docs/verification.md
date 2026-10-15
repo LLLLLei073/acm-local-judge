@@ -60,3 +60,11 @@ HTTP/API 回归 41 项（原 33 项 + 新增 8 项），独立数据目录、独
 ## 验收边界
 
 本次覆盖本机 Windows 环境与内置/构造协议程序；没有宣称 Linux 兼容、真实赛事平台协议兼容、公网恶意代码沙箱隔离或大规模并发能力。多进程上限可配置到 16，实际协作正反例以两个实例验证。CPU 时间具有 Windows 计时粒度；内存采用提交内存，不能直接与 Linux RSS 排名比较。
+
+## 跨平台内核移植（2026-10-15）
+
+- `NativeRunner` 改为平台分发门面：Windows Job Objects 会话原样保留，新增 Linux 会话（rlimit 硬底 + 10ms 轮询 + /proc 测量 + cgroup v2 委托增强 + unshare/setsid 包装探测降级）。
+- 跨平台修正：PATH 分隔符、二进制扩展名、编译器默认路径与 `.exe` 校验、Windows 保留设备名检查仅 Windows 生效。
+- WA 默认不再回显期望 token，题目级 `revealExpected` 开启回显；API 回归增至 43 项（默认隐藏 + 显式开启）。
+- 测试 fixtures 全部去 Windows 化（`std::this_thread::sleep_for` 替代 `Sleep`，字节级输出片段保留 `_WIN32` 分支）。
+- 验收：Windows 全量 verify 通过（Smoke + Multiprocess + 43 项 API + 36 项 Flow + 前端构建）。Linux 会话在 Windows 上仅编译验证（本机无 WSL/Docker）；Linux 真机行为由 `scripts/verify.sh` 在服务器上验收（LinuxRunner 的 TLE/MLE/OLE、netns 探测、cgroup 委托）。

@@ -7,7 +7,7 @@ int passed = 0;
 void Assert(bool condition, string message) { if (!condition) throw new Exception(message); Console.WriteLine("PASS " + message); passed++; }
 foreach (var (a,b,ok) in new[] { (" 2\t3\n", "2 3", true), ("02", "2", false), ("2.0", "2", false), ("Yes", "yes", false), ("2 3", "2", false), ("", " \r\n", true), ("2\u00a03", "2 3", false) })
     Assert((Engine.Compare(a,b).Verdict == "AC") == ok, "token: " + a.Replace('\n',' '));
-string compiler = Environment.GetEnvironmentVariable("ACM_COMPILER") ?? @"D:\mingw64\bin\g++.exe";
+string compiler = Environment.GetEnvironmentVariable("ACM_COMPILER") ?? (OperatingSystem.IsWindows() ? @"D:\mingw64\bin\g++.exe" : "/usr/bin/g++");
 async Task<JudgeResult> Run(string name, Problem p, string source, CancellationToken ct = default)
 {
     var r = await new Engine(new(name, p, source, compiler, Path.Combine(root, "toolkit"), Path.Combine(work, name))).Run(ct);
@@ -28,7 +28,7 @@ var standard = Examples.All()[0] with { Tests = [new("01", "2 3\n", "5\n")] };
 Assert((await Run("compile-error", standard, "not C++")).Status == "CE", "编译错误 CE");
 Assert((await Run("runtime-error", standard, "int main(){return 7;}")).Status == "RE", "异常退出 RE");
 Assert((await Run("cpu-limit", standard with { Limits = new() { CpuMs = 100, WallMs = 1000 } }, "int main(){for(;;){asm volatile(\"\");}}")).Status == "TLE", "CPU 超限 TLE");
-Assert((await Run("wall-limit", standard with { Limits = new() { CpuMs = 100, WallMs = 300 } }, "#include <windows.h>\nint main(){Sleep(10000);}")).Status == "TLE", "墙钟超限 TLE");
+Assert((await Run("wall-limit", standard with { Limits = new() { CpuMs = 100, WallMs = 300 } }, "#include <thread>\n#include <chrono>\nint main(){std::this_thread::sleep_for(std::chrono::milliseconds(10000));}")).Status == "TLE", "墙钟超限 TLE");
 Assert((await Run("output-limit", standard with { Limits = new() { OutputKiB = 1 } }, "#include <iostream>\nint main(){for(;;)std::cout<<\"0123456789abcdef\";}")).Status == "OLE", "输出超限 OLE");
 Assert((await Run("memory-limit", standard with { Limits = new() { MemoryMiB = 16 } }, "#include <cstdlib>\n#include <cstring>\nint main(){for(;;){auto p=malloc(1024*1024);if(!p)return 5;memset(p,1,1024*1024);asm volatile(\"\"::\"r\"(p):\"memory\");}}")).Status == "MLE", "内存超限 MLE");
 using var cancel = new CancellationTokenSource(); cancel.CancelAfter(300);
@@ -48,7 +48,7 @@ string isolated = "#include <iostream>\n#include <fstream>\n#include <string>\ni
 Assert((await Run("communication-isolation", comm, isolated)).Status == "AC", "通信轮次目录独立");
 string managed = "#include \"acm_manager.hpp\"\n#include <fstream>\nint main(){auto init=acm::receive();std::ifstream in(init[\"inputPath\"].get<std::string>()),ans(init[\"answerPath\"].get<std::string>());int x,expected;in>>x;ans>>expected;acm::start();acm::send(0,std::to_string(x)+\"\\n\");acm::close(0);std::string out;for(int r=1;r<=2;r++){while(true){auto e=acm::receive();if(e[\"type\"]==\"eof\")return 3;if(e[\"type\"]==\"output\")out+=acm::decode(e[\"data\"]);if(e[\"type\"]==\"exit\")break;}if(r==1){acm::start();acm::send(0,out);acm::close(0);out.clear();}}acm::verdict(std::stoi(out)==expected?\"AC\":\"WA\");}";
 Assert((await Run("managed-communication", comm with { ManagedCommunication=true, Manager=managed }, comm.ExampleSource)).Status == "AC", "manager 双轮通信");
-Assert((await Run("managed-invalid-order", comm with { ManagedCommunication=true, Manager="#include \"acm_manager.hpp\"\nint main(){acm::receive();acm::start();acm::start();}" }, "#include <windows.h>\nint main(){Sleep(10000);}")).Status == "Judge Error", "禁止并行启动通信轮次");
+Assert((await Run("managed-invalid-order", comm with { ManagedCommunication=true, Manager="#include \"acm_manager.hpp\"\nint main(){acm::receive();acm::start();acm::start();}" }, "#include <thread>\n#include <chrono>\nint main(){std::this_thread::sleep_for(std::chrono::milliseconds(10000));}")).Status == "Judge Error", "禁止并行启动通信轮次");
 var multi = Examples.All()[4];
 Assert((await Run("multi-one-fails", multi, multi.ExampleSource.Replace("int n;", "if(role == 1)return 7; int n;"))).Status == "RE", "多进程任一异常失败");
 Assert((await Run("multi-one-timeout", multi with { Limits=new(){CpuMs=100,WallMs=1000} }, multi.ExampleSource.Replace("int n;", "if(role == 1)for(;;){asm volatile(\"\");} int n;"))).Status == "TLE", "多进程任一超时失败");

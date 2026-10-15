@@ -4,7 +4,7 @@ using Judge.Core;
 string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
 string work = Path.Combine(root, "artifacts", "multiprocess-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
 Directory.CreateDirectory(work);
-string compiler = Environment.GetEnvironmentVariable("ACM_COMPILER") ?? @"D:\mingw64\bin\g++.exe";
+string compiler = Environment.GetEnvironmentVariable("ACM_COMPILER") ?? (OperatingSystem.IsWindows() ? @"D:\mingw64\bin\g++.exe" : "/usr/bin/g++");
 List<string> checks = [];
 void Assert(bool ok, string name) { if (!ok) throw new Exception(name); checks.Add(name); Console.WriteLine("PASS " + name); }
 var problem = MultisetExample.Create();
@@ -42,18 +42,24 @@ await Run("no-flush", one with { Limits = new() { CpuMs = 1000, WallMs = 1500 } 
     problem.ExampleSource.Replace("std::cout << std::flush;", ""), "TLE");
 // Split a logical protocol line across several writes. Preserve tabs/CRLF exactly.
 string fragmented = """
-    #include <windows.h>
+    #include <cstdio>
     #include <iostream>
     #include <cstdlib>
-    #include <fcntl.h>
+    #include <thread>
+    #include <chrono>
+    #ifdef _WIN32
     #include <io.h>
+    #include <fcntl.h>
+    #endif
     int main(int argc,char** argv){
+    #ifdef _WIN32
         _setmode(_fileno(stdout), _O_BINARY);
+    #endif
         int role=atoi(argv[1]), n, x;
         std::cin>>n; for(int i=0;i<n;i++)std::cin>>x;
         if(role==0){
             const char* text="3\r\n1\t2  2\r\n";
-            for(const char* p=text;*p;p++){std::cout.put(*p);std::cout.flush();Sleep(5);}
+            for(const char* p=text;*p;p++){std::fwrite(p,1,1,stdout);std::fflush(stdout);std::this_thread::sleep_for(std::chrono::milliseconds(5));}
             std::cin>>x;std::cout<<x<<std::endl;
         }else{
             std::cin>>n;for(int i=0;i<n;i++)std::cin>>x;

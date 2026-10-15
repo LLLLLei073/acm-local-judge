@@ -19,7 +19,7 @@ public sealed partial class Engine(JudgeRequest request, Action<JudgeResult>? pr
             P.Validate();
             if (P.Tests.Count == 0) throw new InvalidDataException("题目没有测试点");
             Directory.CreateDirectory(Root);
-            Environment.SetEnvironmentVariable("PATH", Path.GetDirectoryName(request.Compiler) + ";" + Environment.GetEnvironmentVariable("PATH"));
+            Environment.SetEnvironmentVariable("PATH", Path.GetDirectoryName(request.Compiler) + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
             result.Status = "Compiling"; Publish();
             await using (var version = new NativeRunner(request.Compiler, ["--version"], Root, new() { CpuMs = 10000, WallMs = 10000 }, token, processLimit: 32))
             {
@@ -66,7 +66,7 @@ public sealed partial class Engine(JudgeRequest request, Action<JudgeResult>? pr
     {
         var path = Path.Combine(Root, name + ".cpp");
         await File.WriteAllTextAsync(path, source, new UTF8Encoding(false), token);
-        var binary = Path.Combine(Root, name + ".exe");
+        var binary = Path.Combine(Root, BinaryName(name));
         string[] args = ["-std=c++23", "-O2", "-pipe", "-I", request.ToolkitPath, path, "-o", binary];
         await using var runner = new NativeRunner(request.Compiler, args, Root, new() { CpuMs = 60000, WallMs = 60000, MemoryMiB = 1024, OutputKiB = 1024 }, token, processLimit: 32);
         await runner.CloseInput(); var r = await runner.Completion;
@@ -111,21 +111,27 @@ public sealed partial class Engine(JudgeRequest request, Action<JudgeResult>? pr
         var (verdict, message) = await Check(test, dir, Convert.FromBase64String(last.StdoutBase64), token);
         return Case(test, runs, verdict, message, trace);
     }
-    public static (string Verdict, string Message) Compare(string actual, string expected)
+    public static (string Verdict, string Message) Compare(string actual, string expected, bool revealExpected = false)
     {
         var a = Regex.Split(actual, "[ \\t\\r\\n\\v\\f]+").Where(x => x.Length != 0).ToArray();
         var b = Regex.Split(expected, "[ \\t\\r\\n\\v\\f]+").Where(x => x.Length != 0).ToArray();
         for (int i = 0; i < Math.Max(a.Length, b.Length); i++)
-            if (i >= a.Length || i >= b.Length || a[i] != b[i]) return ("WA", $"第 {i + 1} 个 token 不同：期望「{(i < b.Length ? Short(b[i]) : "<EOF>")}」，实际「{(i < a.Length ? Short(a[i]) : "<EOF>")}」");
+            if (i >= a.Length || i >= b.Length || a[i] != b[i])
+            {
+                // Revealing expected tokens is a per-problem opt-in: the answer is not public to contestants by default.
+                if (!revealExpected) return ("WA", $"第 {i + 1} 个 token 不同（期望 {b.Length} 个 token，实际 {a.Length} 个）");
+                return ("WA", $"第 {i + 1} 个 token 不同：期望「{(i < b.Length ? Short(b[i]) : "<EOF>")}」，实际「{(i < a.Length ? Short(a[i]) : "<EOF>")}」");
+            }
         return ("AC", "所有 token 相同");
     }
+    public static string BinaryName(string name) => name + (OperatingSystem.IsWindows() ? ".exe" : "");
     private static string Short(string value) => value.Length > 160 ? value[..160] + "…" : value;
     private async Task<(string, string)> Check(TestData test, string dir, byte[] actual, CancellationToken token)
     {
         if (!binaries.ContainsKey("checker"))
         {
             // Text input/answers are UTF-8; reject malformed output instead of silently replacing bytes.
-            try { return Compare(new UTF8Encoding(false, true).GetString(actual), test.Answer); }
+            try { return Compare(new UTF8Encoding(false, true).GetString(actual), test.Answer, P.RevealExpected); }
             catch (DecoderFallbackException) { return ("WA", "输出不是有效 UTF-8，无法与答案 token 匹配"); }
         }
         string output = Path.Combine(dir, "output.txt"); await File.WriteAllBytesAsync(output, actual, token);

@@ -1,6 +1,6 @@
 # ACM Local Judge
 
-Windows 原生 C++23 本地测评工作台。Vue 3 + Monaco 前端，ASP.NET Core 10 后端，独立 Worker，SQLite 持久化。
+跨平台 C++23 测评工作台：Windows 本机开箱即用，可部署到 Linux 服务器（见 [部署指南](docs/deploy.md)）。Vue 3 + Monaco 前端，ASP.NET Core 10 后端，独立 Worker，SQLite 持久化。
 
 ## 启动
 
@@ -42,17 +42,17 @@ powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -SkipBuild
 | 通信 | 两次新进程、新工作目录；默认第一轮输出原始字节转发到第二轮；支持 manager 模式 | 两轮 CPU/内存分别取最大值 |
 | 多进程 | 同一程序 N 个实例；`argv[1]` 为 0 起始编号，`argv[2]` 为 N；manager 路由消息 | 每实例分别限额，CPU/内存分别取最大值 |
 
-标准题 `02` 不等于 `2`，`2.0` 不等于 `2`，`Yes` 不等于 `yes`。无效 UTF-8 输出返回 WA，不会以替换字符参与比较。特判读取选手输出原始字节。
+标准题 `02` 不等于 `2`，`2.0` 不等于 `2`，`Yes` 不等于 `yes`。无效 UTF-8 输出返回 WA，不会以替换字符参与比较。特判读取选手输出原始字节。WA 默认只提示第 N 个 token 不同，**不回显期望答案**；出题调试可在题目 JSON 中设 `revealExpected: true` 打开回显。
 
 编译参数固定 `-std=c++23 -O2 -pipe`，判题工具额外包含 `toolkit` 目录。每次记录实际 GCC 版本。C++23 的具体标准库功能支持由安装的 GCC 决定。
 
-CPU 为实例所属 Job 的用户态 + 内核态时间，包含其线程；内存为 **Windows 提交内存峰值**，不是 Linux RSS。CPU 通过约 10ms 周期检查，并在退出后再核算；极短程序的读数存在系统计时粒度。墙钟独立限制读写等待；不提供自动 flush。
+CPU 为实例进程树的内核统计 CPU 时间；内存峰值为 **Windows 提交内存峰值（commit）**或 **Linux RSS 峰值**——两者口径不同，同一限制值在两侧判定强度有差异，跨平台复用题目时建议预留余量。CPU 通过约 10ms 周期检查，并在退出后再核算；极短程序的读数存在系统计时粒度。墙钟独立限制读写等待；不提供自动 flush。
 
 多进程题的同一份程序同时运行多个角色，由调度器分发各自输入、双向转发消息、按协议判定。选手只需读取角色编号、使用普通 stdin/stdout；JSON/Base64 只用于调度器与引擎之间。「双泊对照」的完整题面、选手程序和调度器见 [MultisetExample.cs](src/Judge.Core/MultisetExample.cs)。已有本地题库不会因源码更新自动覆盖；可导入新版 [Multiprocess.zip](examples/Multiprocess.zip)。
 
 默认：选手 2000ms CPU / 10000ms 墙钟 / 256MiB / stdout+stderr 16MiB；编译 60s / 1GiB / 日志 1MiB；判题工具 10000ms CPU / 512MiB。交互与 manager 的墙钟至少覆盖整个选手会话。多进程数 2–16。
 
-选手进程挂起创建、加入 Job 后恢复运行；关闭 Job 自动清理进程。选手每实例只允许一个 OS 进程，内部可用线程；多个协作实例由评测器启动。编译器允许必要的子进程。提交按顺序开始，可同时运行多个独立 Worker：并行评测数 1–8（默认 2），在「运行环境」设置，保存后立即生效，并发评测各自独立限额、会争抢 CPU，墙钟读数可能波动。单个提交内普通错误后仍运行剩余测试点；最终取测试点顺序中首个非 AC，基础设施错误或取消单独处理。
+Windows 上选手进程挂起创建、加入 Job 后恢复运行，关闭 Job 自动清理进程。Linux 上以 rlimits（CPU/地址空间/文件大小/进程数）为硬底、10ms 轮询精确判定，可用时加入 cgroup v2 组获得树级内存/进程限制与 `cgroup.kill`，并按发行版能力探测启用无特权网络 namespace 隔离（`ACM_NETWORK_ISOLATION=0` 关闭，`ACM_CGROUP=0` 禁用 cgroup，`ACM_CGROUP_DIR` 指定委托目录）。选手每实例只允许一个 OS 进程，内部可用线程；多个协作实例由评测器启动。编译器允许必要的子进程。提交按顺序开始，可同时运行多个独立 Worker：并行评测数 1–8（默认 2），在「运行环境」设置，保存后立即生效，并发评测各自独立限额、会争抢 CPU，墙钟读数可能波动。单个提交内普通错误后仍运行剩余测试点；最终取测试点顺序中首个非 AC，基础设施错误或取消单独处理。
 
 状态：AC、WA、PE、CE、RE、TLE、MLE、OLE、Judge Error、Cancelled、Interrupted，以及 Queued/Compiling/Running。checker/interactor 的 0/1/2 退出码映射 AC/WA/PE，其他退出码或工具超限为 Judge Error；不支持部分分。manager 使用显式判定消息，并正常退出。
 
@@ -60,7 +60,7 @@ CPU 为实例所属 Job 的用户态 + 内核态时间，包含其线程；内�
 
 `data/judge.db` 保存题目和提交索引，`data/problems/` 保存题目版本及数据文件，`data/submissions/` 保存每次源码、快照、编译产物和日志。删除题目不删除历史快照。服务重启将未完成提交标记 Interrupted，不自动重复执行。备份时先停止服务，再复制整个 `data` 目录。
 
-源码结构：`src/Judge.Core` 是 Windows 运行器和判题引擎；`src/Judge.Worker` 是独立执行入口；`src/Judge.Server` 是队列、SQLite、题目包和 HTTP API；`web` 是 Vue 工作台；`toolkit` 内置固定版本的 testlib 和 C++ manager SDK。
+源码结构：`src/Judge.Core` 是沙箱会话（Windows Job Objects / Linux rlimit+cgroups）和判题引擎；`src/Judge.Worker` 是独立执行入口；`src/Judge.Server` 是队列、SQLite、题目包和 HTTP API；`web` 是 Vue 工作台；`toolkit` 内置固定版本的 testlib 和 C++ manager SDK。
 
 ```powershell
 # 前端开发（另一个终端运行后端）

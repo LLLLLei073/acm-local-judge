@@ -5,7 +5,7 @@ using Judge.Server;
 string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
 string work = Path.Combine(root, "artifacts", "flow-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
 Directory.CreateDirectory(work);
-string compiler = Environment.GetEnvironmentVariable("ACM_COMPILER") ?? @"D:\mingw64\bin\g++.exe";
+string compiler = Environment.GetEnvironmentVariable("ACM_COMPILER") ?? (OperatingSystem.IsWindows() ? @"D:\mingw64\bin\g++.exe" : "/usr/bin/g++");
 List<string> checks = [];
 void Assert(bool ok, string name) { if (!ok) throw new Exception(name); checks.Add(name); Console.WriteLine("PASS " + name); }
 Problem Fresh() => FlowExample.Create();
@@ -65,11 +65,11 @@ await Run("output-limit", small, "#include <cstdio>\nint main(){for(int i=0;i<10
 await Run("compile-error", Fresh(), "not C++", "CE");
 using (var cancel = new CancellationTokenSource())
 {
-    var task = new Engine(new("cancel", Fresh(), "#include <windows.h>\nint main(){Sleep(9000);}", compiler, Path.Combine(root, "toolkit"), Path.Combine(work, "cancel")), r => { if (r.Status == "Running") cancel.CancelAfter(150); }).Run(cancel.Token);
+    var task = new Engine(new("cancel", Fresh(), "#include <thread>\n#include <chrono>\nint main(){std::this_thread::sleep_for(std::chrono::milliseconds(9000));}", compiler, Path.Combine(root, "toolkit"), Path.Combine(work, "cancel")), r => { if (r.Status == "Running") cancel.CancelAfter(150); }).Run(cancel.Token);
     Assert((await task).Status == "Cancelled", "cancel flow session");
 }
 // A received line may arrive in multiple pipe callbacks.
-var splitSource = problem.ExampleSource.Replace("#include <cstdlib>", "#include <cstdlib>\n#include <windows.h>").Replace("std::cout << a << std::endl;", "std::cout << a << std::flush; Sleep(30); std::cout << std::endl;");
+var splitSource = problem.ExampleSource.Replace("#include <cstdlib>", "#include <cstdlib>\n#include <thread>\n#include <chrono>").Replace("std::cout << a << std::endl;", "std::cout << a << std::flush; std::this_thread::sleep_for(std::chrono::milliseconds(30)); std::cout << std::endl;");
 await Run("fragmented-line", Fresh(), splitSource, "AC");
 // A line much larger than the native pipe chunk must be consumed only once.
 var large = Fresh(); string payload = new('x', 100000);

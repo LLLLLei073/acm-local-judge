@@ -40,6 +40,7 @@ public record Problem
     public string SecondMarker { get; set; } = "second";
     public int ProcessCount { get; set; } = 2;
     public string Protocol { get; set; } = "";
+    public bool RevealExpected { get; set; }
     public List<TestData> Tests { get; set; } = [];
     public string ExampleSource { get; set; } = "";
     public string WrongSource { get; set; } = "";
@@ -56,7 +57,7 @@ public record Problem
         foreach (var t in Tests)
         {
             if (t is null || t.Name is null || t.Input is null || t.Answer is null) throw new InvalidDataException("测试点字段不能为 null");
-            if (!System.Text.RegularExpressions.Regex.IsMatch(t.Name, @"^[\p{L}\p{N}_-][\p{L}\p{N}_.-]{0,79}$") || System.Text.RegularExpressions.Regex.IsMatch(t.Name, @"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) throw new InvalidDataException("测试点名称无效或使用 Windows 保留设备名");
+            if (!System.Text.RegularExpressions.Regex.IsMatch(t.Name, @"^[\p{L}\p{N}_-][\p{L}\p{N}_.-]{0,79}$") || OperatingSystem.IsWindows() && System.Text.RegularExpressions.Regex.IsMatch(t.Name, @"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) throw new InvalidDataException("测试点名称无效" + (OperatingSystem.IsWindows() ? "或使用 Windows 保留设备名" : ""));
         }
         if (Tests.Sum(t => (long)System.Text.Encoding.UTF8.GetByteCount(t.Input) + System.Text.Encoding.UTF8.GetByteCount(t.Answer)) > 60L * 1024 * 1024) throw new InvalidDataException("测试数据总量不能超过 60 MiB");
         if (FirstMarker.Length > 128 || SecondMarker.Length > 128 || FirstMarker.Any(char.IsWhiteSpace) || SecondMarker.Any(char.IsWhiteSpace) || FirstMarker.Length == 0 || SecondMarker.Length == 0 || FirstMarker == SecondMarker) throw new InvalidDataException("轮次标记必须是不同的非空 token");

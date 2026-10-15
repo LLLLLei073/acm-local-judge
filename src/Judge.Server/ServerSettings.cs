@@ -17,8 +17,9 @@ public static class ServerSettings
     {
         var settings = Read(data);
         if (settings.TryGetValue("compiler", out var path) && path.Length > 0) return path;
-        return Environment.GetEnvironmentVariable("ACM_COMPILER") ?? @"D:\mingw64\bin\g++.exe";
+        return Environment.GetEnvironmentVariable("ACM_COMPILER") ?? DefaultCompiler();
     }
+    public static string DefaultCompiler() => OperatingSystem.IsWindows() ? @"D:\mingw64\bin\g++.exe" : "/usr/bin/g++";
 
     public static int Parallelism(string data)
     {

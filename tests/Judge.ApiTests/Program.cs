@@ -96,6 +96,15 @@ try
         string stream=await response.Content.ReadAsStringAsync();File.WriteAllText(Path.Combine(evidence,"events.txt"),stream);Assert(stream.Contains("data:")&&stream.Contains("\"status\":\"AC\""),"SSE reaches terminal AC");
     }
     Assert((await Wait(id))["result"]!["status"]!.GetValue<string>()=="AC","real worker submission AC");
+    var reveal=Examples.All()[0] with {Id="",Title="WA reveal",Tests=[new("01","1\n","42\n")]};
+    reveal.Id=(await Request("POST","/problems",reveal))["id"]!.GetValue<string>();
+    string wrong=(await Request("POST","/submissions",new{problemId=reveal.Id,source="#include <iostream>\nint main(){std::cout<<41<<std::endl;}"}))["id"]!.GetValue<string>();
+    var wrongResult=(await Wait(wrong))["result"]!;
+    Assert(wrongResult["status"]!.GetValue<string>()=="WA"&&!wrongResult["cases"]![0]!["message"]!.GetValue<string>().Contains("42"),"WA hides expected tokens by default");
+    reveal.RevealExpected=true;await Request("PUT","/problems/"+reveal.Id,reveal);
+    // The old submission's snapshot predates the flag, so a fresh submission picks up RevealExpected.
+    string rerun=(await Request("POST","/submissions",new{problemId=reveal.Id,source="#include <iostream>\nint main(){std::cout<<41<<std::endl;}"}))["id"]!.GetValue<string>();
+    Assert((await Wait(rerun))["result"]!["cases"]![0]!["message"]!.GetValue<string>().Contains("42"),"RevealExpected opts into showing expected tokens");
     p.Tests[0]=p.Tests[0] with {Answer="999"};await Request("PUT","/problems/"+p.Id,p);
     string repeat=(await Request("POST","/submissions/"+id+"/rejudge"))["id"]!.GetValue<string>();
     Assert((await Wait(repeat))["result"]!["status"]!.GetValue<string>()=="AC","rejudge uses immutable snapshot");
@@ -146,7 +155,7 @@ try
     Assert((await Wait(follower))["result"]!["status"]!.GetValue<string>()=="AC","serial queue B returns AC");
     }
     p.Limits=new(){CpuMs=30000,WallMs=40000};await Request("PUT","/problems/"+p.Id,p);
-    string hang="#include <windows.h>\nint main(){Sleep(30000);}";
+    string hang="#include <thread>\n#include <chrono>\nint main(){std::this_thread::sleep_for(std::chrono::milliseconds(30000));}";
     string cancel=(await Request("POST","/submissions",new{problemId=p.Id,source=hang}))["id"]!.GetValue<string>();
     Assert((await Wait(cancel,"Running"))["submission"]!["status"]!.GetValue<string>()=="Running","cancel fixture reaches running");
     await Request("POST","/submissions/"+cancel+"/cancel");Assert((await Wait(cancel))["result"]!["status"]!.GetValue<string>()=="Cancelled","cancel running submission");
