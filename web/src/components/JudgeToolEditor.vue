@@ -1,0 +1,12 @@
+<script setup lang="ts">
+import { computed, defineAsyncComponent, ref, watch } from 'vue';
+import type { Problem } from '../types';
+import { judgeTools, type JudgeTool } from '../domain/judge-tools';
+const problem=defineModel<Problem>({required:true});
+const CodeEditor=defineAsyncComponent(()=>import('../CodeEditor.vue'));
+const selected=ref<JudgeTool>('checker'),showInactive=ref(false);
+const config=computed(()=>judgeTools(problem.value));
+const tools=computed<JudgeTool[]>(()=>showInactive.value?['checker','interactor','manager']:[...config.value.required,...config.value.optional]);
+watch(tools, list=>{if(!list.includes(selected.value)&&list[0])selected.value=list[0];},{immediate:true});
+</script>
+<template><section class="judge-tool-editor"><div class="protocol-note"><strong>本题的执行方式</strong><p>{{ config.guide }}</p><p v-if="config.required.length">必须配置：{{ config.required.map(t=>t+'.cpp').join('、') }}。工具的 CPU、内存和输出使用独立限额。</p></div><div class="judge-toolbar"><div><h3>判题源码</h3><p class="muted">testlib.h · acm_manager.hpp 已内置；不会计入选手资源。</p></div><label class="checkbox"><input type="checkbox" v-model="showInactive" />查看全部工具</label><select v-if="tools.length" v-model="selected" aria-label="判题工具选择"><option v-for="tool in tools" :key="tool" :value="tool">{{ tool }}.cpp · {{ config.required.includes(tool)?'必需':config.optional.includes(tool)?'可选':'当前不执行' }}</option></select></div><div v-if="tools.length" class="judge-editor"><CodeEditor v-model="problem[selected]" /></div><p v-else class="muted">此模式无需额外工具；已有源码仍保留，可勾选「查看全部工具」查看。</p><div class="verify-examples"><h3>标准答案</h3><p class="muted">用于真实验题与强化数据的答案计算。交互、通信和多进程程序按协议输出后需 flush。</p><label>标准答案源码（C++23，stdin → stdout）<textarea v-model="problem.exampleSource" rows="10" spellcheck="false"></textarea></label><label class="checkbox"><input type="checkbox" v-model="problem.revealExpected" />WA 回显期望答案（仅建议用于未发布题目的定位）</label><details class="judge-advanced"><summary>判题程序独立资源限额</summary><div class="form-grid"><label>判题 CPU / ms<input type="number" v-model.number="problem.judgeLimits.cpuMs" min="50" max="300000" /></label><label>判题墙钟 / ms<input type="number" v-model.number="problem.judgeLimits.wallMs" min="50" max="600000" /></label><label>判题内存 / MiB<input type="number" v-model.number="problem.judgeLimits.memoryMiB" min="8" max="8192" /></label><label>判题输出 / KiB<input type="number" v-model.number="problem.judgeLimits.outputKiB" min="1" max="65536" /></label></div></details></div></section></template>

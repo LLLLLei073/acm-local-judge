@@ -13,4 +13,9 @@ if ($LASTEXITCODE -ne 0) { throw 'API verification failed' }
 dotnet run --project tests/Judge.FlowTests/Judge.FlowTests.csproj -c Release
 if ($LASTEXITCODE -ne 0) { throw 'Visual communication flow verification failed' }
 Push-Location web
-try { pnpm build; if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' } } finally { Pop-Location }
+try {
+    pnpm test
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend behavior verification failed' }
+    pnpm build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
+} finally { Pop-Location }

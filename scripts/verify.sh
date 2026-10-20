@@ -16,7 +16,7 @@ dotnet run --project tests/Judge.ApiTests/Judge.ApiTests.csproj -c Release
 dotnet run --project tests/Judge.FlowTests/Judge.FlowTests.csproj -c Release
 
 if command -v pnpm >/dev/null 2>&1; then
-  (cd web && pnpm build)
+  (cd web && pnpm test && pnpm build)
 else
   echo "NOTE: pnpm not found; skipping frontend build (deploy a prebuilt web/dist)."
 fi

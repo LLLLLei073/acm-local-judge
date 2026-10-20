@@ -1,8 +1,10 @@
+param([int]$Port = 27123)
 $ErrorActionPreference = 'SilentlyContinue'
+$serviceUrl = "http://127.0.0.1:$Port"
 for ($attempt = 0; $attempt -lt 60; $attempt++) {
     try {
-        $response = Invoke-WebRequest 'http://127.0.0.1:27123/api/environment' -UseBasicParsing -TimeoutSec 1
-        if ($response.StatusCode -eq 200) { Start-Process 'http://127.0.0.1:27123'; exit }
+        $response = Invoke-RestMethod "$serviceUrl/healthz" -TimeoutSec 1
+        if ($response.app -eq 'acm-local-judge' -and $response.status -eq 'ok') { Start-Process $serviceUrl; exit }
     } catch {}
     Start-Sleep -Milliseconds 500
 }

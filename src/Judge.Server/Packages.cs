@@ -39,7 +39,7 @@ public static class Packages
         }
         if (!files.TryGetValue("problem.json", out var manifest)) throw new InvalidDataException("缺少根目录 problem.json");
         if (JsonNode.Parse(manifest)?["formatVersion"]?.GetValue<int>() != 1) throw new InvalidDataException("不支持的题目包版本");
-        var p = Json.Read<Problem>(manifest); p.Id = "";
+        var p = Json.Read<Problem>(manifest); p.Id = ""; p.Published = false;
         p.Statement = files.GetValueOrDefault("statement.md", ""); p.Checker = files.GetValueOrDefault("checker.cpp", ""); p.Interactor = files.GetValueOrDefault("interactor.cpp", ""); p.Manager = files.GetValueOrDefault("manager.cpp", ""); p.Tests = [];
         var inputs = files.Keys.Where(k => k.StartsWith("tests/", StringComparison.OrdinalIgnoreCase) && k.EndsWith(".in", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.OrdinalIgnoreCase);
         foreach (var path in inputs)

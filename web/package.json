@@ -3,7 +3,27 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "vue-tsc --noEmit && vite build", "check": "vue-tsc --noEmit" },
-  "dependencies": { "vue": "^3.5.22", "monaco-editor": "^0.55.1", "marked": "^16.4.0", "dompurify": "^3.2.7", "lucide-vue-next": "^0.545.0" },
-  "devDependencies": { "@vitejs/plugin-vue": "^6.0.1", "vite": "^7.1.9", "typescript": "~5.9.3", "vue-tsc": "^3.1.1", "@types/node": "^22.18.10" }
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "check": "vue-tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.17",
+    "@langchain/openai": "^1.6.2",
+    "dompurify": "^3.2.7",
+    "lucide-vue-next": "^0.545.0",
+    "marked": "^16.4.0",
+    "monaco-editor": "^0.55.1",
+    "vue": "^3.5.22",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.10",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.9",
+    "vue-tsc": "^3.1.1"
+  }
 }

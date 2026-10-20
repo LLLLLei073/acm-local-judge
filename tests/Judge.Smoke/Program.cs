@@ -20,7 +20,10 @@ foreach (var p in Examples.All())
 {
     var r = await Run(p.Mode + "-good", p, p.ExampleSource);
     Assert(r.Status == "AC", p.Mode + " 正确程序 AC");
-    var w = await Run(p.Mode + "-bad", p, p.WrongSource);
+    string WrongFor(Problem q) => q.Mode == JudgeMode.Interactive
+        ? "#include <iostream>\nint main(){std::cin.tie(nullptr);for(int i=0;i<3;i++){int x;std::cin>>x;std::cout<<2*x<<'\\n';}}"
+        : Examples.Wrong;
+    var w = await Run(p.Mode + "-bad", p, WrongFor(p));
     Assert(w.Status == (p.Mode == JudgeMode.Interactive ? "TLE" : "WA"), p.Mode + " 错误程序");
     foreach (var c in r.Cases) Assert(c.CpuMs == c.Instances.Max(i=>i.Run.Usage.CpuMs) && c.MemoryBytes == c.Instances.Max(i=>i.Run.Usage.MemoryBytes), p.Mode + " 资源最大值");
 }

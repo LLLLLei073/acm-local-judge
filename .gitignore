@@ -16,3 +16,11 @@ data/
 *.sqlite3
 .vs/
 .idea/
+
+# Mimosa 安全插件内部状态（策略文件除外，它是项目安全模型文档）
+.mimosa/*
+!.mimosa/security-policy.json
+# Mimosa 安全插件内部状态（根目录策略文件除外，它是项目安全模型文档）
+.mimosa/*
+!.mimosa/security-policy.json
+**/.mimosa/

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { Plus, Trash2, ArrowUp, ArrowDown, GripVertical, ChevronDown } from 'lucide-vue-next';
 import type { CommunicationFlow, FlowStep, TestData } from './types';
-import { flowData, newStep, referenceError, route } from './flow';
+import { flowData, newStep, referenceError, route, flowIssues } from './flow';
 import FlowDataEditor from './FlowDataEditor.vue';
 import FlowPreview from './FlowPreview.vue';
 const flow = defineModel<CommunicationFlow>({ required: true });
@@ -10,6 +10,8 @@ defineProps<{ test?: TestData }>();
 const emit = defineEmits<{ membersChanged: [count: number] }>();
 const warning = ref(''), dragging = ref<number>();
 const opened = ref<string | undefined>(flow.value.steps[0]?.id);
+const issues = computed(()=>flowIssues(flow.value));
+function focusStep(id:string) { opened.value=id; nextTick(()=>document.getElementById('flow-step-'+id)?.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})); }
 function addMember() {
   if (flow.value.members.length >= 16) return;
   let name = `角色 ${flow.value.members.length}`;
@@ -43,9 +45,10 @@ function removeStep(i: number) {
     <div class="member-grid"><div class="scheduler-member"><b>调度器</b><span>分发 · 转发 · 校验</span></div><div v-for="(_,i) in flow.members" :key="i" class="member-card"><span class="member-id">argv[1] = {{ i }}</span><input v-model="flow.members[i]" :aria-label="`成员 ${i} 名称`" maxlength="40" /><button class="icon-btn" :aria-label="`删除成员 ${i}`" :disabled="flow.members.length<=2" @click="removeMember(i)"><Trash2 :size="14" /></button></div></div>
     <p class="muted small-note">每个成员是同一程序的独立进程。删除成员后编号连续重排，相关步骤同步更新。</p>
     <div v-if="warning" class="alert" role="alert">{{ warning }}</div>
+    <div v-if="issues.length" class="flow-validation" role="status"><strong>流程检查 · {{ issues.length }} 项待处理</strong><ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul></div>
     <div class="section-toolbar"><h3>通信步骤 <span class="count-pill">{{ flow.steps.length }}</span></h3><span class="muted small-note">拖动步骤标题，或使用上下箭头排序</span></div>
     <div v-if="!flow.steps.length" class="flow-empty">先添加“发送数据”，再添加“接收 / 转发”，最后校验成员的回答。</div>
-    <article v-for="(step,i) in flow.steps" :key="step.id" :aria-label="`步骤 ${i+1}`" class="flow-step" @dragover.prevent @drop.prevent="drop(i)">
+    <article v-for="(step,i) in flow.steps" :key="step.id" :id="'flow-step-'+step.id" :aria-label="`步骤 ${i+1}`" class="flow-step" @dragover.prevent @drop.prevent="drop(i)">
       <header class="step-heading" draggable="true" @dragstart="dragging=i" @dragend="dragging=undefined"><GripVertical :size="16" /><span class="step-number">{{ String(i+1).padStart(2,'0') }}</span><button class="step-title" :aria-label="`编辑步骤 ${i+1}`" :aria-expanded="opened===step.id" @click="opened=opened===step.id?undefined:step.id">{{ route(flow,step) }}<ChevronDown :size="14" /></button><div class="step-actions"><button class="icon-btn" :aria-label="`上移步骤 ${i+1}`" :disabled="i===0" @click="reorder(i,i-1)"><ArrowUp :size="15" /></button><button class="icon-btn" :aria-label="`下移步骤 ${i+1}`" :disabled="i===flow.steps.length-1" @click="reorder(i,i+1)"><ArrowDown :size="15" /></button><button class="icon-btn" :aria-label="`删除步骤 ${i+1}`" @click="removeStep(i)"><Trash2 :size="15" /></button></div></header>
       <div v-if="opened===step.id" class="step-body"><div class="step-routing">
         <label>操作<select v-model="step.kind" @change="step.to=step.kind==='receive'?-1:0"><option value="send">发送数据</option><option value="receive">接收 / 转发</option><option value="close">关闭成员输入</option></select></label>
@@ -61,7 +64,7 @@ function removeStep(i: number) {
       </div>
     </article>
     <div class="add-steps"><button class="button secondary" :disabled="flow.steps.length>=256" @click="addStep('send')"><Plus :size="14" />发送数据</button><button class="button secondary" :disabled="flow.steps.length>=256" @click="addStep('receive')"><Plus :size="14" />接收 / 转发</button><button class="button secondary" :disabled="flow.steps.length>=256" @click="addStep('close')"><Plus :size="14" />关闭输入</button></div>
-    <FlowPreview :flow="flow" :test="test" />
+    <FlowPreview :flow="flow" :test="test" :selected="opened" @select="focusStep" />
   </div>
 </template>
 <style scoped>

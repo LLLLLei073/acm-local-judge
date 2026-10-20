@@ -106,16 +106,19 @@ manager → 引擎：
 | 方法 | 路径 | 行为 |
 |---|---|---|
 | GET / PUT | `/api/environment` / `/api/settings` | 查询环境 / 设置 `{compiler:绝对路径}` |
-| GET / POST | `/api/problems` | 列表 / 新建完整题目对象 |
-| GET / PUT / DELETE | `/api/problems/{id}` | 查询 / 更新 / 删除题目，历史保留 |
-| POST | `/api/problems/{id}/tests` | multipart 文件集合，按同名配对合并 |
+| GET / POST | `/api/problems` | 列表（选手仅见已发布题目，管理员额外带 `published` 字段）/ 新建完整题目对象 |
+| GET / PUT / DELETE | `/api/problems/{id}` | 查询 / 更新 / 删除题目，历史保留；未发布题目对非管理员返回 404 |
+| POST | `/api/problems/{id}/harden` | 强化测试数据：`{tests:[{input}]}`（≤20 条），沙箱编译标准答案逐条运行生成答案，以 `h01…` 追加为测试点；任一条超时/异常/答案超限则整体拒绝 |
+| POST | `/api/problems/{id}/brute` | 暴力对拍：`{source}` 编译后按题目限额逐测试点运行，遇首个非 AC 即停，返回 `{results,stopped}` |
+| POST | `/api/problems/{id}/rejudge-all` | 整题重测：该题全部历史提交按**当前**题目快照（含强化数据）重新入队，返回 `{requeued}` |
 | GET | `/api/problems/{id}/export` | ZIP 下载 |
 | POST | `/api/packages/preview` | multipart `file`，返回验证后的题目对象；POST 到 problems 完成导入 |
-| GET / POST | `/api/submissions` | 最近 200 条 / `{problemId,source}` 创建提交 |
+| GET / POST | `/api/submissions` | 最近 200 条 / `{problemId,source}` 创建提交（未发布题目仅管理员可提交） |
 | GET | `/api/submissions/{id}` | 提交、结果、原始源码 |
 | GET | `/api/submissions/{id}/events` | SSE JSON 帧，最终状态后关闭 |
-| GET | `/api/submissions/{id}/logs` | 完整 JSON 结果 |
 | POST | `/api/submissions/{id}/cancel` | 取消排队或运行任务 |
 | POST | `/api/submissions/{id}/rejudge` | 用原题目、源码、工具快照创建新提交 |
+
+题目对象带 `published` 与 `rating` 标志：`rating` 为 CF 风格 100–3500（0=未评级），**发布与加入比赛都要求已评级**（服务端在保存题目与保存比赛时分别校验）；题目新建默认为草稿，由管理员在验题工作台评级、验证后显式发布。题目的 `exampleSource` 是标准答案源码：一键验题运行它校验全部测试点，强化数据端点也用它计算新增输入的答案。管理端内置 LangChain 助手（浏览器直连用户配置的 OpenAI 兼容服务，请求不经过测评机服务端），用于评级建议与强化数据输入生成。
 
 源码快照与结果文件位于 submission id 对应目录。程序 stdout 以可读 UTF-8（替换非法字节）供 UI 展示，同时 `stdoutBase64` 保存原始字节；判题和双轮转发不使用有损展示文本。trace 的 dataBase64 保留方向、时间戳及原始字节。

@@ -38,7 +38,13 @@ Reject("null data part", p => p.Flow!.Steps[0].AdditionalData = [null!]);
 Reject("enabled in standard mode", p => p.Mode = JudgeMode.Standard);
 var problem = Fresh();
 var zipped = Packages.Export(problem);
-using (var zip = new MemoryStream(zipped)) Assert(Json.Write(await Packages.Import(zip, default)) == Json.Write(problem), "ZIP preserves ordered flow, members and samples");
+using (var zip = new MemoryStream(zipped))
+{
+    var imported = await Packages.Import(zip, default);
+    Assert(imported.Id == "" && !imported.Published &&
+        Json.Write(imported with { Id = problem.Id, Published = problem.Published }) == Json.Write(problem),
+        "ZIP preserves ordered flow, members and samples while importing as a new draft");
+}
 File.WriteAllBytes(Path.Combine(root, "examples", "VisualFlow.zip"), zipped);
 var store = new Store(root, Path.Combine(work, "store"));
 var saved = store.Save(Fresh(), true);
@@ -51,7 +57,7 @@ var good = await Run("relay", problem, problem.ExampleSource, "AC");
 Assert(good.Cases.Count == 2 && good.Cases.All(c => c.CpuMs == c.Instances.Max(r => r.Run.Usage.CpuMs) && c.MemoryBytes == c.Instances.Max(r => r.Run.Usage.MemoryBytes)), "multiple tests and maximum usage");
 string Sent(CaseResult c, string to) => Encoding.UTF8.GetString(c.Trace.Where(t => t.From == "manager" && t.To == to).SelectMany(t => Convert.FromBase64String(t.DataBase64)).ToArray());
 Assert(Sent(good.Cases[0], "1:0") == "3\n7\r\n" && Sent(good.Cases[0], "1:1") == "4\n3\r\n", "relay preserves CRLF exactly");
-await Run("wrong-answer", Fresh(), problem.WrongSource, "WA");
+await Run("wrong-answer", Fresh(), problem.ExampleSource.Replace("a + b", "a - b"), "WA");
 await Run("early-exit", Fresh(), "int main(){}", "WA");
 await Run("crash", Fresh(), "int main(){return 7;}", "RE");
 await Run("extra-output", Fresh(), problem.ExampleSource.Replace("std::cout << b << std::endl;", "std::cout << b << std::endl << 99 << std::endl;"), "WA");

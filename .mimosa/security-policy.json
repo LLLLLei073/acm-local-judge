@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "threatModel": {
+    "inherit": true,
+    "assets": [
+      "题库与测试数据（data/problems）",
+      "提交源码与评测结果（data/submissions）",
+      "SQLite 数据库（data/judge.db，含 users 表）",
+      "访问令牌与会话签名密钥（data/settings.json）"
+    ],
+    "attackerControlledInputs": [
+      "选手提交的 C++ 源码（≤1 MiB，仅在受限沙箱会话内编译执行）",
+      "题目包 ZIP（≤64 MiB，导入前做路径穿越/绝对路径/解压炸弹校验）",
+      "测试数据（≤60 MiB，名称经正则与保留设备名校验）",
+      "注册与登录表单（学号/姓名/邮箱/密码，正则与长度校验，口令只存 PBKDF2 哈希）"
+    ],
+    "trustBoundaries": [
+      "选手浏览器 → 反向代理 → 服务端 API（管理 API 一律令牌；选手 API 需 HMAC 签名的注册用户会话 Cookie）",
+      "服务端 → 独立 Worker 进程（request.json 不可变快照 + 父进程看门狗 + cancel 哨兵）",
+      "Worker → 沙箱会话（Windows Job Objects / Linux rlimit+cgroups v2，整树击杀）",
+      "服务端 → codeforces.com 公开 user.info API（仅 CF 绑定验证与 rating 刷新；测试经 ACM_CF_API 指向本地桩）"
+    ],
+    "securityInvariants": [
+      "选手代码只在受限会话内运行：进程数/内存/CPU/墙钟/输出限额，超限整树击杀",
+      "管理 API（题目/比赛/用户列表/设置/导出/重评）无条件要求管理员令牌",
+      "选手端题目详情经 PublicViews 脱敏：答案、判题器源码、通信流程期望值不下发",
+      "口令仅存 PBKDF2-SHA256 哈希且永不下发；会话为 HMAC 签名 Cookie；榜单匿名是展示层脱敏，邮箱不进榜单"
+    ],
+    "exclusions": [
+      "编译器路径由管理员在设置页配置（服务端校验绝对路径与存在性），属可信部署配置而非攻击者输入",
+      "ACM_ROOT/ACM_DATA 为服务器部署环境变量，非 HTTP 可达输入",
+      "提交按注册用户归属（submissions.userId）；排行榜匿名由用户自主切换，属展示层约定（data.requireOwnerScope=false 指扫描工具无需按属主过滤数据文件）",
+      "Worker 的 request.json 路径由服务端进程构造（GUID 目录 + 固定文件名），非外部输入",
+      "CF 绑定的出网目标固定为 codeforces.com 的公开只读接口；自动化测试用本地 HTTP 桩替代真实外呼"
+    ]
+  },
+  "network": {
+    "allowedProtocols": ["https:"],
+    "allowedHosts": [],
+    "blockPrivateNetworks": true,
+    "maxRedirects": 0
+  },
+  "command": {
+    "forbidShell": true,
+    "allowedBinaries": ["dotnet", "g++", "gcc", "setsid", "unshare", "solution", "solution.exe", "checker", "checker.exe", "interactor", "interactor.exe", "manager", "manager.exe"]
+  },
+  "path": {
+    "allowedWriteRoots": ["data", "artifacts"],
+    "requireBasename": true
+  },
+  "data": {
+    "allowedSortFields": ["createdAt"],
+    "requireOwnerScope": false
+  }
+}

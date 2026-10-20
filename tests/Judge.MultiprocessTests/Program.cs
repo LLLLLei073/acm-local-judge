@@ -29,7 +29,7 @@ Assert(Sent(sample, "1:0", "manager") == "3\r\n1 2 2\r\n1\r\n" && Sent(sample, "
 Assert(good.Cases.All(c => c.Instances.Count == 2 && c.CpuMs == c.Instances.Max(i => i.Run.Usage.CpuMs) &&
     c.MemoryBytes == c.Instances.Max(i => i.Run.Usage.MemoryBytes)), "resource usage is per-role maximum");
 var one = problem with { Tests = [problem.Tests[0]] };
-await Run("disagree", one, problem.WrongSource, "WA");
+await Run("disagree", one, problem.ExampleSource.Replace("std::cout << answer << '\\n' << std::flush; // role 0 final", "std::cout << (1 - answer) << '\\n' << std::flush; // wrong: roles disagree"), "WA");
 await Run("both-wrong", one, problem.ExampleSource.Replace("(values == other ? 1 : 0)", "0"), "WA");
 await Run("unsorted", problem with { Tests = [new("01", "3\n2 1 2\n2 2 1\n", "1\n")] },
     problem.ExampleSource.Replace("std::sort(values.begin(), values.end());", "if(role == 1) std::sort(values.begin(), values.end());"), "WA");

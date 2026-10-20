@@ -37,7 +37,7 @@ public static class ServerSettings
         return int.TryParse(raw, out var value) && value is >= 1 and <= MaxParallelism ? value : DefaultParallelism;
     }
 
-    // The access token gates non-loopback API access. ACM_TOKEN explicitly overrides; otherwise the
+    // The access token gates management APIs. ACM_TOKEN explicitly overrides; otherwise the
     // token is minted once, persisted and printed at startup.
     public static string Token(string data)
     {
@@ -47,6 +47,17 @@ public static class ServerSettings
         token = RandomNumberGenerator.GetHexString(32, lowercase: true);
         Merge(data, new KeyValuePair<string, string>("token", token));
         return token;
+    }
+
+    // HMAC key for contestant session cookies (acm_user). Minted once like the token; rotating it
+    // signs every user out.
+    public static string SessionSecret(string data)
+    {
+        var settings = Read(data);
+        if (settings.TryGetValue("sessionSecret", out var secret) && secret.Length > 0) return secret;
+        secret = RandomNumberGenerator.GetHexString(32, lowercase: true);
+        Merge(data, new KeyValuePair<string, string>("sessionSecret", secret));
+        return secret;
     }
 
     public static List<string> AllowedHosts(string data)
@@ -70,14 +81,8 @@ public static class ServerSettings
     public static int RetainProblemVersions(string data) => IntSetting(data, "retainProblemVersions", "ACM_RETAIN_PROBLEM_VERSIONS");
     public static int RetainSubmissions(string data) => IntSetting(data, "retainSubmissions", "ACM_RETAIN_SUBMISSIONS");
 
-    // When open, remote contestants may browse and submit without the admin token; management
-    // endpoints always require it. Default closed: remote access needs the token everywhere.
-    public static bool OjOpen(string data)
-    {
-        var settings = Read(data);
-        if (settings.TryGetValue("ojOpen", out var value)) return value == "1";
-        return Environment.GetEnvironmentVariable("ACM_OJ_OPEN") == "1";
-    }
+    // Contestants sign in with their own accounts; the former ACM_OJ_OPEN/ACM_AUTH anonymous modes
+    // were removed when the user system landed.
     private static int IntSetting(string data, string key, string env)
     {
         var settings = Read(data);

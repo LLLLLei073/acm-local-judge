@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import FlowSequence from './components/FlowSequence.vue';
 import type { CommunicationFlow, TestData } from './types';
 import { samples } from './flow';
-const props = defineProps<{ flow: CommunicationFlow; test?: TestData }>();
+const props = defineProps<{ flow: CommunicationFlow; test?: TestData; selected?: string }>();
+const emit=defineEmits<{ select: [id: string] }>();
+const sequence=ref(true);
+const focused=ref<string>();
 const rows = computed(() => samples(props.flow, props.test));
+const selectedRow=computed(()=>rows.value.find(row=>row.id===(props.selected??focused.value)));
+function choose(id:string) { focused.value=id; emit('select',id); }
 </script>
 <template>
   <section v-if="rows.length" class="flow-preview">
     <h3>通信样例 · 按通信顺序</h3>
     <p class="muted">样例内容用于说明；实际执行读取各测试点的数据。内容保留真实换行。</p>
-    <div class="flow-table-wrap"><table><thead><tr><th>步骤</th><th>发送方 → 接收方</th><th>内容</th></tr></thead><tbody>
+    <div class="preview-switch"><button :class="{active:sequence}" @click="sequence=true">成员时序图</button><button :class="{active:!sequence}" @click="sequence=false">通信表格</button><span>↓ 按顺序执行 · ↵ 表示换行</span></div>
+    <FlowSequence v-if="sequence" :flow="flow" :rows="rows" :selected="selected ?? focused" @select="choose" />
+    <div v-if="sequence && selectedRow" class="sequence-detail"><strong>{{ selectedRow.route }}</strong><pre>{{ selectedRow.content || '（空内容）' }}</pre></div>
+    <div v-if="!sequence" class="flow-table-wrap"><table><thead><tr><th>步骤</th><th>发送方 → 接收方</th><th>内容</th></tr></thead><tbody>
       <tr v-for="(row,i) in rows" :key="row.id"><td>{{ i+1 }}</td><td>{{ row.route }}</td><td><pre>{{ row.content || '（空内容）' }}</pre></td></tr>
     </tbody></table></div>
   </section>

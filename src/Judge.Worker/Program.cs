@@ -25,7 +25,13 @@ try
     var engine = new Engine(request, result =>
     {
         File.WriteAllText(resultPath + ".tmp", Json.Write(result));
-        File.Move(resultPath + ".tmp", resultPath, true);
+        // A concurrent reader (server polling/SSE) or antivirus may hold the destination briefly;
+        // retry the atomic swap instead of failing the whole submission.
+        for (int attempt = 0; ; attempt++)
+        {
+            try { File.Move(resultPath + ".tmp", resultPath, true); break; }
+            catch (Exception ex) when (attempt < 10 && ex is IOException or UnauthorizedAccessException) { Thread.Sleep(50); }
+        }
         Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new Progress(result.Status, result.Message, result.Cases.Count, request.Problem.Tests.Count), Json.Compact));
     });
     await engine.Run(cancellation.Token);

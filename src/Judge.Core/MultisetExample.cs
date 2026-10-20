@@ -6,6 +6,7 @@ public static class MultisetExample
     public static Problem Create() => new()
     {
         Title = "双泊对照 · 双进程交互", Mode = JudgeMode.Multiprocess, ProcessCount = 2,
+        Published = true, Rating = 2100,
         Statement = """
             ## 题目描述
             两份货物清单各有 n 个整数。判断它们是否为同一个多重集：忽略顺序后，每个数值的出现次数相同。
@@ -44,7 +45,6 @@ public static class MultisetExample
             new("02", "3\n1 1 2\n1 2 2\n", "0\n"),
             new("03", "3\n1000000000000000000 0 1000000000000000000\n0 1000000000000000000 1000000000000000000\n", "1\n")],
         ExampleSource = Solution,
-        WrongSource = Solution.Replace("std::cout << answer << '\\n' << std::flush; // role 0 final", "std::cout << (1 - answer) << '\\n' << std::flush; // wrong: roles disagree"),
         Manager = Manager,
         // Includes Base64 framing for two initial arrays plus the relayed array.
         JudgeLimits = new() { CpuMs = 10000, WallMs = 60000, MemoryMiB = 512, OutputKiB = 32768 }

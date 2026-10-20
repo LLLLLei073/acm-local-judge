@@ -30,6 +30,10 @@ public record Problem
     public string Title { get; set; } = "未命名题目";
     public string Statement { get; set; } = "";
     public JudgeMode Mode { get; set; }
+    // 新建题目默认为草稿；显式发布且已评级后才对选手可见。
+    public bool Published { get; set; }
+    // CF 风格难度评级：100–3500，0 表示未评级。发布与加入比赛都要求已评级。
+    public int Rating { get; set; }
     public Limits Limits { get; set; } = new();
     public Limits JudgeLimits { get; set; } = new() { CpuMs = 10000, WallMs = 60000, MemoryMiB = 512 };
     public string Checker { get; set; } = "";
@@ -42,12 +46,12 @@ public record Problem
     public string Protocol { get; set; } = "";
     public bool RevealExpected { get; set; }
     public List<TestData> Tests { get; set; } = [];
+    // 标准答案源码：用于一键验题，并在服务端为强化测试点计算答案。
     public string ExampleSource { get; set; } = "";
-    public string WrongSource { get; set; } = "";
     public CommunicationFlow? Flow { get; set; }
     public void Validate()
     {
-        if (Limits is null || JudgeLimits is null || Tests is null || Statement is null || Checker is null || Interactor is null || Manager is null || ExampleSource is null || WrongSource is null || Protocol is null || FirstMarker is null || SecondMarker is null)
+        if (Limits is null || JudgeLimits is null || Tests is null || Statement is null || Checker is null || Interactor is null || Manager is null || ExampleSource is null || Protocol is null || FirstMarker is null || SecondMarker is null)
             throw new InvalidDataException("题目字段不能为 null");
         if (!Enum.IsDefined(Mode)) throw new InvalidDataException("未知评测类型");
         if (string.IsNullOrWhiteSpace(Title) || Title.Length > 200) throw new InvalidDataException("标题应为 1–200 字符");
@@ -61,11 +65,13 @@ public record Problem
         }
         if (Tests.Sum(t => (long)System.Text.Encoding.UTF8.GetByteCount(t.Input) + System.Text.Encoding.UTF8.GetByteCount(t.Answer)) > 60L * 1024 * 1024) throw new InvalidDataException("测试数据总量不能超过 60 MiB");
         if (FirstMarker.Length > 128 || SecondMarker.Length > 128 || FirstMarker.Any(char.IsWhiteSpace) || SecondMarker.Any(char.IsWhiteSpace) || FirstMarker.Length == 0 || SecondMarker.Length == 0 || FirstMarker == SecondMarker) throw new InvalidDataException("轮次标记必须是不同的非空 token");
+        if (Rating != 0 && Rating is < 100 or > 3500) throw new InvalidDataException("rating 应为 100–3500，或 0 表示未评级");
+        if (Published && Rating == 0) throw new InvalidDataException("发布前必须为题目标注难度 rating（100–3500），可先用 AI 助手建议");
         if (Mode == JudgeMode.Special && string.IsNullOrWhiteSpace(Checker)) throw new InvalidDataException("特判需要 checker");
         if (Mode == JudgeMode.Interactive && string.IsNullOrWhiteSpace(Interactor)) throw new InvalidDataException("交互题需要 interactor");
         Flow?.Validate(this);
         if ((Mode == JudgeMode.Multiprocess && Flow?.Enabled != true || Mode == JudgeMode.Communication && ManagedCommunication) && string.IsNullOrWhiteSpace(Manager)) throw new InvalidDataException("此模式需要 manager");
-        if (new[] { Checker, Interactor, Manager, ExampleSource, WrongSource }.Any(x => x.Length > 1024 * 1024)) throw new InvalidDataException("单份源码不能超过 1 MiB");
+        if (new[] { Checker, Interactor, Manager, ExampleSource }.Any(x => x.Length > 1024 * 1024)) throw new InvalidDataException("单份源码不能超过 1 MiB");
     }
 }
 public record JudgeRequest(string Id, Problem Problem, string Source, string Compiler, string ToolkitPath, string WorkPath);

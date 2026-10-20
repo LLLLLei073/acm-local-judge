@@ -18,6 +18,25 @@ export function referenceError(steps: FlowStep[]): string {
   }
   return '';
 }
+export function flowIssues(flow: CommunicationFlow): string[] {
+  const issues: string[] = [], closed = new Set<number>(), ids = new Set<string>();
+  const reference = referenceError(flow.steps); if (reference) issues.push(reference);
+  if (flow.members.length < 2 || flow.members.length > 16 || flow.members.some(n=>!n.trim()) || new Set(flow.members.map(n=>n.trim())).size!==flow.members.length) issues.push('成员需为 2–16 个，名称非空且唯一。');
+  const member=(id:number)=>Number.isInteger(id)&&id>=0&&id<flow.members.length;
+  for (const [i,s] of flow.steps.entries()) {
+    const prefix=`步骤 ${i+1}：`;
+    if (!s.id || ids.has(s.id)) issues.push(prefix+'步骤标识缺失或重复。'); ids.add(s.id);
+    if (s.kind==='receive') {
+      if (!member(s.from)||s.to < -1||s.to>=flow.members.length||s.from===s.to||!Number.isInteger(s.lines)||s.lines<1||s.lines>1000000) issues.push(prefix+'接收成员或读取行数无效。');
+      if (closed.has(s.to)) issues.push(prefix+'目标成员输入已经关闭。');
+    } else {
+      if (!member(s.to)||closed.has(s.to)) issues.push(prefix+'目标成员无效或输入已经关闭。');
+      if (s.kind==='close') closed.add(s.to);
+    }
+  }
+  if (flow.enabled&&!flow.steps.some(s=>s.kind==='receive'&&s.check)) issues.push('启用流程需要至少一个输出校验。');
+  return issues;
+}
 export function sampleData(data: FlowData, test?: TestData, messages = new Map<string, string>()): string {
   if (data.source === 'literal') return data.text;
   const text = data.source === 'input' ? test?.input : data.source === 'answer' ? test?.answer : messages.get(data.stepId);

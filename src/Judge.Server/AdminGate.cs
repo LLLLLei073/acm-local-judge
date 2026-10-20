@@ -1,0 +1,13 @@
+namespace Judge.Server;
+
+public static class AdminGate
+{
+    public const string Html = """
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>ACM 管理端 · 登录</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#172f32;color:#284437;font-family:'Bahnschrift','Microsoft YaHei UI',sans-serif}.card{width:min(100%,430px);padding:38px;background:#fffefa;border:1px solid #d6dfcd;border-radius:8px;box-shadow:0 20px 60px #081b2040}.tag{font:10px Consolas,monospace;letter-spacing:2px;color:#66845a}.mark{height:38px;width:38px;display:grid;place-items:center;background:#d8ed9a;border-radius:4px;margin-bottom:24px;font:20px Consolas,monospace}h1{font-family:'SimSun',Georgia,serif;font-size:28px;margin:12px 0 16px}.sub,.hint{font-size:12px;line-height:1.8;color:#6a7d60}.sub{margin-bottom:24px}label{display:block;font-size:12px;margin-bottom:10px}input{width:100%;padding:12px;margin-bottom:18px;border:1px solid #cbd8be;border-radius:5px;background:#fbfdf7;font-size:15px;color:#2f4d36}button{width:100%;padding:12px;border:0;border-radius:5px;background:#126455;color:#fff;font-size:13px;cursor:pointer}button:disabled{opacity:.6}input:focus-visible,button:focus-visible{outline:3px solid #6e9e65;outline-offset:3px}.err{color:#ad4d3d;font-size:12px;min-height:18px;line-height:1.7}.hint{margin-top:22px;border-top:1px solid #e0e7d7;padding-top:17px}
+</style></head><body><main class="card"><div class="mark">›_</div><span class="tag">PROBLEM OPERATIONS</span><h1>ACM 管理端</h1><p class="sub">从准备一道题，到发布一场比赛。<br>输入访问令牌，进入出题工作台。</p><form onsubmit="go(event)"><label for="token">访问令牌</label><input id="token" type="password" autocomplete="off" required autofocus><p class="err" id="msg" role="alert"></p><button id="submit">进入工作台</button></form><p class="hint">令牌由服务启动日志提供。登录后本浏览器 30 天内免重复输入；选手账号请在 OJ 首页登录。</p></main><script>
+async function go(event){event.preventDefault();var button=document.getElementById('submit'),message=document.getElementById('msg');if(button.disabled)return;button.disabled=true;button.textContent='正在验证…';message.textContent='';try{var response=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:document.getElementById('token').value.trim()})});if(response.ok){location.href='/admin';return;}message.textContent='令牌不正确，请检查后重试';}catch{message.textContent='连接失败，请检查服务状态后重试';}button.disabled=false;button.textContent='进入工作台';}
+</script></body></html>
+""";
+}
