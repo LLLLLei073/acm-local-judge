@@ -1439,6 +1439,9 @@ meter::-webkit-meter-optimum-value {
     gap: 7px;
     padding: 9px;
   }
+  .sidebar > .nav-item.selected {
+    display: flex;
+  }
   .main-shell {
     margin-left: 0;
     width: 100%;
@@ -1446,6 +1449,25 @@ meter::-webkit-meter-optimum-value {
   .topbar {
     padding: 12px 18px;
     min-height: 62px;
+  }
+  .topbar-right {
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .user-button {
+    white-space: nowrap;
+  }
+  .breadcrumb {
+    min-width: 0;
+    flex: 1;
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .breadcrumb b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .runtime-tag {
     display: none;

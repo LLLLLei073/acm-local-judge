@@ -5,12 +5,15 @@ namespace Judge.Server;
 
 public static class ServerSettings
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Store> RemoteStores = new();
+    public static void ConfigureCloud(Store store) => RemoteStores[store.Data] = store;
     public const int DefaultParallelism = 2;
     public const int MaxParallelism = 8;
     public const string CookieName = "acm_access";
 
     public static Dictionary<string, string> Read(string data)
     {
+        if (RemoteStores.TryGetValue(data, out var store)) return store.RemoteMetadata("settings") is { } json ? Json.Read<Dictionary<string, string>>(json) : [];
         var path = Path.Combine(data, "settings.json");
         return File.Exists(path) ? Json.Read<Dictionary<string, string>>(File.ReadAllText(path)) : [];
     }
@@ -19,7 +22,8 @@ public static class ServerSettings
     {
         var settings = Read(data);
         foreach (var (key, value) in values) settings[key] = value;
-        File.WriteAllText(Path.Combine(data, "settings.json"), Json.Write(settings));
+        if (RemoteStores.TryGetValue(data, out var store)) store.RemoteMetadata("settings", Json.Write(settings));
+        else File.WriteAllText(Path.Combine(data, "settings.json"), Json.Write(settings));
     }
 
     public static string Compiler(string data)
@@ -53,6 +57,7 @@ public static class ServerSettings
     // signs every user out.
     public static string SessionSecret(string data)
     {
+        if (Environment.GetEnvironmentVariable("ACM_SESSION_SECRET") is { Length: > 0 } fromEnv) return fromEnv;
         var settings = Read(data);
         if (settings.TryGetValue("sessionSecret", out var secret) && secret.Length > 0) return secret;
         secret = RandomNumberGenerator.GetHexString(32, lowercase: true);
@@ -64,7 +69,8 @@ public static class ServerSettings
     {
         var settings = Read(data);
         var raw = settings.TryGetValue("allowedHosts", out var value) && value.Length > 0 ? value : Environment.GetEnvironmentVariable("ACM_ALLOWED_HOSTS") ?? "";
-        return [.. raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(NormalizeHost), "127.0.0.1", "localhost", "::1"];
+        var renderHost = Environment.GetEnvironmentVariable("RENDER_EXTERNAL_HOSTNAME");
+        return [.. raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(NormalizeHost), .. string.IsNullOrEmpty(renderHost) ? Array.Empty<string>() : new[] { NormalizeHost(renderHost) }, "127.0.0.1", "localhost", "::1"];
     }
     public static string NormalizeHost(string host) => host.Trim().TrimStart('[').TrimEnd(']').ToLowerInvariant();
 

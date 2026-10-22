@@ -37,6 +37,9 @@ public static class Standings
         var raw = new List<(string UserId, int Solved, int Penalty, DateTimeOffset? LastAc, List<StandingsCell> Cells)>();
         foreach (var userId in log.Keys.Select(k => k.UserId).Distinct())
         {
+            // An always-open practice set has no shared start. Time each participant from
+            // their first attempt, rather than treating DateTimeOffset.MinValue as a start.
+            var elapsedFrom = contest.StartsAt ?? log.Where(pair => pair.Key.UserId == userId).SelectMany(pair => pair.Value).Min(s => s.CreatedAt);
             var cells = new List<StandingsCell>(ordered.Count);
             int solved = 0, penalty = 0;
             DateTimeOffset? lastAc = null;
@@ -46,7 +49,7 @@ public static class Standings
                 list.Sort((a, b) => a.CreatedAt.CompareTo(b.CreatedAt));
                 var firstAc = list.FirstOrDefault(s => s.Status == "AC");
                 int wrong = firstAc == null ? list.Count : list.TakeWhile(s => s.Status != "AC").Count();
-                int acMinutes = firstAc == null ? 0 : Math.Max(0, (int)Math.Floor((firstAc.CreatedAt - from).TotalMinutes));
+                int acMinutes = firstAc == null ? 0 : Math.Max(0, (int)Math.Floor((firstAc.CreatedAt - elapsedFrom).TotalMinutes));
                 if (firstAc != null) { solved++; penalty += acMinutes + PenaltyPerWrong * wrong; lastAc = lastAc == null || firstAc.CreatedAt > lastAc ? firstAc.CreatedAt : lastAc; }
                 cells.Add(new StandingsCell(list.Count, firstAc != null, acMinutes, list.Any(s => JudgeQueue.IsActive(s.Status))));
             }

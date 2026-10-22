@@ -13,6 +13,17 @@ string evidence = Path.Combine(root, "artifacts", "api-" + DateTime.Now.ToString
 Directory.CreateDirectory(evidence);
 List<string> checks = [];
 void Assert(bool ok, string name) { if (!ok) throw new Exception(name); checks.Add(name); Console.WriteLine("PASS " + name); }
+var practiceEpoch=DateTimeOffset.Parse("2026-10-20T00:00:00Z");
+var practiceProblem=Examples.All()[0] with { Id="practice-problem" };
+var practiceContest=new Contest { Id="practice",Title="Practice",ProblemIds=[practiceProblem.Id] };
+var practiceUsers=new List<User>{new(){Id="early"},new(){Id="late"},new(){Id="clean"}};
+Submission PracticeAttempt(string id,string user,string status,DateTimeOffset at)=>new(id,practiceProblem.Id,practiceProblem.Title,practiceProblem.Mode,status,at,user);
+var practiceAttempts=new List<Submission>{PracticeAttempt("e1","early","WA",practiceEpoch),PracticeAttempt("e2","early","AC",practiceEpoch.AddMinutes(7)),PracticeAttempt("l1","late","WA",practiceEpoch.AddDays(1)),PracticeAttempt("l2","late","AC",practiceEpoch.AddDays(1).AddMinutes(3)),PracticeAttempt("c1","clean","AC",practiceEpoch.AddDays(2))};
+var practiceBoard=Standings.Build(practiceContest,[practiceProblem],practiceUsers,practiceAttempts);
+Assert(practiceBoard.Rows.Single(r=>r.UserId=="early").Penalty==27&&practiceBoard.Rows.Single(r=>r.UserId=="late").Penalty==23,"open practice uses each participant's first attempt as the elapsed-time origin");
+Assert(practiceBoard.Rows[0].UserId=="clean"&&practiceBoard.Rows[0].Penalty==0,"a clean first practice submission has zero elapsed penalty");
+var timedBoard=Standings.Build(practiceContest with {StartsAt=practiceEpoch.AddMinutes(-5)},[practiceProblem],practiceUsers,practiceAttempts);
+Assert(timedBoard.Rows.Single(r=>r.UserId=="early").Penalty==32&&timedBoard.Rows.Single(r=>r.UserId=="late").Penalty==1468,"timed contests retain their shared start and twenty-minute wrong-attempt penalty");
 foreach (var p in Examples.All())
 {
     using var zip = new MemoryStream(Packages.Export(p)); var read = await Packages.Import(zip, default);
@@ -146,6 +157,48 @@ try
     Assert(bruteGood["stopped"]!.GetValue<bool>()==false&&bruteGood["results"]!.AsArray().Count==3,"brute passes the standard solution on all tests");
     using(var bruteEmpty=new HttpRequestMessage(HttpMethod.Post,"/api/problems/"+p.Id+"/brute"){Content=new StringContent(Json.Write(new{source=""}),Encoding.UTF8,"application/json")})
         Assert((await client.SendAsync(bruteEmpty)).StatusCode==HttpStatusCode.BadRequest,"brute requires a source");
+    // Authoring tools must execute every actual protocol, rather than pretending all modes are batch I/O.
+    var authoringProblems=Examples.All().Skip(1).Select(example=>(Label:example.Mode.ToString(),Problem:example)).ToList();
+    authoringProblems.Add(("VisualFlow",FlowExample.Create()));
+    string authoringManager="""
+        #include "acm_manager.hpp"
+        #include <fstream>
+        int main(){auto init=acm::receive();std::ifstream in(init["inputPath"].get<std::string>()),ans(init["answerPath"].get<std::string>());int x,expected;in>>x;ans>>expected;acm::start();acm::send(0,std::to_string(x)+"\n");acm::close(0);std::string out;for(int r=1;r<=2;r++){while(true){auto e=acm::receive();if(e["type"]=="eof")return 3;if(e["type"]=="output")out+=acm::decode(e["data"]);if(e["type"]=="exit")break;}if(r==1){acm::start();acm::send(0,out);acm::close(0);out.clear();}}acm::verdict(std::stoi(out)==expected?"AC":"WA");}
+        """;
+    authoringProblems.Add(("ManagedCommunication",Examples.All()[3] with {ManagedCommunication=true,Manager=authoringManager}));
+    foreach(var (label,example) in authoringProblems)
+    {
+        var authoring=example with {Id="",Title="Authoring "+label,Published=false};
+        authoring.Id=(await Request("POST","/problems",authoring))["id"]!.GetValue<string>();
+        var protocolBrute=await Request("POST","/problems/"+authoring.Id+"/brute",new{source=authoring.ExampleSource});
+        Assert(!protocolBrute["stopped"]!.GetValue<bool>()&&protocolBrute["results"]!.AsArray().Count==authoring.Tests.Count&&protocolBrute["results"]!.AsArray().All(r=>r!["verdict"]!.GetValue<string>()=="AC"),label+" brute uses the actual judge protocol");
+        var sample=authoring.Tests[0];
+        var protocolHarden=await Request("POST","/problems/"+authoring.Id+"/harden",new{tests=new[]{new{input=sample.Input,answer=sample.Answer}}});
+        Assert(protocolHarden["tests"]!.AsArray().Count==authoring.Tests.Count+1,label+" hardening validates before appending data");
+        if(authoring.Mode is JudgeMode.Interactive or JudgeMode.Communication or JudgeMode.Multiprocess)
+            Assert(protocolHarden["tests"]!.AsArray().Last()!["answer"]!.GetValue<string>()==sample.Answer,label+" hardening preserves the supplied reference judgement");
+        if(authoring.Mode==JudgeMode.Special)
+        {
+            var rounded=await Request("POST","/problems/"+authoring.Id+"/brute",new{source="#include <iostream>\nint main(){std::cout<<\"1.414214\";}"});
+            Assert(!rounded["stopped"]!.GetValue<bool>(),"special brute accepts a different output within checker tolerance");
+        }
+        if(label=="Communication")
+        {
+            using var rejected=await client.PostAsJsonAsync("/api/problems/"+authoring.Id+"/harden",new{tests=new[]{new{input=sample.Input,answer=sample.Answer},new{input=sample.Input,answer="0\n"}}});
+            Assert(rejected.StatusCode==HttpStatusCode.BadRequest&&(await rejected.Content.ReadAsStringAsync()).Contains("WA"),"communication hardening rejects an incorrect reference judgement");
+            Assert((await Request("GET","/problems/"+authoring.Id))["tests"]!.AsArray().Count==authoring.Tests.Count+1,"a later hardening failure persists none of the proposed batch");
+        }
+    }
+    var crashingChecker=Examples.All()[1] with {Id="",Title="Authoring checker crash",Published=false,Checker="int main(){return 42;}"};
+    crashingChecker.Id=(await Request("POST","/problems",crashingChecker))["id"]!.GetValue<string>();
+    var judgeFailure=await Request("POST","/problems/"+crashingChecker.Id+"/brute",new{source=crashingChecker.ExampleSource});
+    Assert(judgeFailure["results"]![0]!["verdict"]!.GetValue<string>()=="Judge Error","brute preserves judge failures instead of misclassifying them as WA");
+    var emptyInput=Examples.All()[0] with {Id="",Title="Authoring empty input",Published=false,ExampleSource="#include <iostream>\nint main(){std::cout<<7;}",Tests=[new("01","","7")]};
+    emptyInput.Id=(await Request("POST","/problems",emptyInput))["id"]!.GetValue<string>();
+    var emptyAdded=await Request("POST","/problems/"+emptyInput.Id+"/harden",new{tests=new[]{new{input=""},new{input="  \n\n"}}});
+    Assert(emptyAdded["tests"]![1]!["input"]!.GetValue<string>()==""&&emptyAdded["tests"]![2]!["input"]!.GetValue<string>()=="  \n\n","hardening preserves valid empty input and trailing whitespace exactly");
+    using(var bruteCe=await client.PostAsJsonAsync("/api/problems/"+emptyInput.Id+"/brute",new{source="not C++"}))
+        Assert(bruteCe.StatusCode==HttpStatusCode.BadRequest&&(await bruteCe.Content.ReadAsStringAsync()).Contains("CE"),"brute reports candidate compilation failure explicitly");
     var submission=await Request("POST","/submissions",new{problemId=p.Id,source=Examples.Sum});string id=submission["id"]!.GetValue<string>();
     using(var response=await client.GetAsync("/api/submissions/"+id+"/events",HttpCompletionOption.ResponseHeadersRead))
     {
@@ -324,6 +377,12 @@ try
     Assert((await SendUser("POST","/api/users/login",new{studentId="999999",password="pass123456"})).StatusCode==HttpStatusCode.Unauthorized,"unknown student id rejected");
     using(var me=await SendUser("GET","/api/users/me"))
         Assert(JsonNode.Parse(await me.Content.ReadAsStringAsync())!["user"]!["name"]!.GetValue<string>()=="张三","session cookie resolves the account");
+    Assert((await SendUser("POST","/api/users/me/password",new{currentPassword="incorrect",newPassword="replacement123"})).StatusCode==HttpStatusCode.BadRequest,"password change rejects an incorrect current password");
+    Assert((await SendUser("POST","/api/users/me/password",new{currentPassword="pass123456",newPassword="123"})).StatusCode==HttpStatusCode.BadRequest,"password change rejects a weak new password");
+    Assert((await SendUser("POST","/api/users/me/password",new{currentPassword="pass123456",newPassword="replacement123"})).IsSuccessStatusCode,"password change accepts valid credentials");
+    Assert((await SendUser("POST","/api/users/login",new{studentId="230001",password="pass123456"})).StatusCode==HttpStatusCode.Unauthorized,"changed password invalidates the old login credential");
+    Assert((await SendUser("POST","/api/users/login",new{studentId="230001",password="replacement123"})).IsSuccessStatusCode,"changed password can authenticate the account");
+    Assert((await SendUser("POST","/api/users/me/password",new{currentPassword="replacement123",newPassword="pass123456"})).IsSuccessStatusCode,"password fixture restores its original credential for later checks");
     using(var anonymize=await SendUser("PUT","/api/users/me",new{name="张三",email="zhang@stu.edu.cn",anonymous=true}))
         Assert(JsonNode.Parse(await anonymize.Content.ReadAsStringAsync())!["user"]!["anonymous"]!.GetValue<bool>(),"anonymity toggle stored");
     // Codeforces 挑战绑定：错误验证码被拒；把 CF 资料 lastName 改成验证码后通过并拉到 rating

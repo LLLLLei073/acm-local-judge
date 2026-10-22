@@ -13,6 +13,7 @@ public record User
     public string Email { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public string CodeforcesHandle { get; set; } = "";
+    public string CodeforcesBindingVersion { get; set; } = "";
     public int? CodeforcesRating { get; set; }
     public string CodeforcesRank { get; set; } = "";
     public DateTimeOffset? RatingUpdatedAt { get; set; }

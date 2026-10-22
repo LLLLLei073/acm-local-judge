@@ -10,6 +10,9 @@ dotnet run --project tests/Judge.MultiprocessTests/Judge.MultiprocessTests.cspro
 if ($LASTEXITCODE -ne 0) { throw 'Multiprocess relay verification failed' }
 dotnet run --project tests/Judge.ApiTests/Judge.ApiTests.csproj -c Release
 if ($LASTEXITCODE -ne 0) { throw 'API verification failed' }
+
+dotnet run --project tests/Judge.CodeforcesTests/Judge.CodeforcesTests.csproj -c Release
+if ($LASTEXITCODE -ne 0) { throw 'Codeforces binding and synchronization verification failed' }
 dotnet run --project tests/Judge.FlowTests/Judge.FlowTests.csproj -c Release
 if ($LASTEXITCODE -ne 0) { throw 'Visual communication flow verification failed' }
 Push-Location web

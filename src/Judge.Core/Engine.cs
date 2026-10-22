@@ -12,7 +12,7 @@ public sealed partial class Engine(JudgeRequest request, Action<JudgeResult>? pr
     private Problem P => request.Problem;
     private string Root => request.WorkPath;
     private readonly Dictionary<string, string> binaries = [];
-    public async Task<JudgeResult> Run(CancellationToken token)
+    public async Task<JudgeResult> Run(CancellationToken token, bool stopOnFailure = false)
     {
         try
         {
@@ -51,7 +51,7 @@ public sealed partial class Engine(JudgeRequest request, Action<JudgeResult>? pr
                     _ => await Batch(test, dir, token)
                 };
                 result.Cases.Add(c); Publish();
-                if (c.Verdict is "Judge Error" or "Cancelled") break;
+                if (c.Verdict is "Judge Error" or "Cancelled" || stopOnFailure && c.Verdict != "AC") break;
             }
             result.Status = result.Cases.FirstOrDefault(c => c.Verdict is "Judge Error" or "Cancelled")?.Verdict
                 ?? result.Cases.FirstOrDefault(c => c.Verdict != "AC")?.Verdict ?? "AC";

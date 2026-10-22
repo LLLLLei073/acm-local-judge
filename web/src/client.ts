@@ -33,7 +33,7 @@ export async function loadMe(): Promise<UserInfo | undefined> {
   currentUser.value = data.user ?? undefined;
   return currentUser.value;
 }
-export async function registerUser(body: { studentId: string; name: string; email: string; password: string }): Promise<UserInfo> {
+export async function registerUser(body: { studentId: string; name: string; email: string; password: string; inviteCode?: string }): Promise<UserInfo> {
   const data = await fetch('/api/users/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const payload = await data.json().catch(() => ({}));
   if (!data.ok) throw new Error(payload.error || '注册失败');

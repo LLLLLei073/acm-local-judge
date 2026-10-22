@@ -11,7 +11,12 @@ var root = Path.GetFullPath(Environment.GetEnvironmentVariable("ACM_ROOT") ?? Di
 var data = Path.GetFullPath(Environment.GetEnvironmentVariable("ACM_DATA") ?? Path.Combine(root, "data"));
 Directory.CreateDirectory(data);
 using var instanceLock = new FileStream(Path.Combine(data, "server.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-int port = int.TryParse(Environment.GetEnvironmentVariable("ACM_PORT"), out var configuredPort) ? configuredPort : 27123;
+var postgresConnection = Environment.GetEnvironmentVariable("ACM_POSTGRES");
+bool cloud = !string.IsNullOrWhiteSpace(postgresConnection);
+if (cloud)
+    foreach (var key in new[] { "ACM_TOKEN", "ACM_SESSION_SECRET", "ACM_WORKER_TOKEN", "ACM_REGISTRATION_CODE" })
+        if ((Environment.GetEnvironmentVariable(key)?.Length ?? 0) < 16) throw new InvalidDataException($"云端部署必须设置至少 16 位的 {key}");
+int port = int.TryParse(Environment.GetEnvironmentVariable("ACM_PORT") ?? Environment.GetEnvironmentVariable("PORT"), out var configuredPort) ? configuredPort : 27123;
 if (port is < 1024 or > 65535) throw new InvalidDataException("ACM_PORT 必须是 1024–65535");
 var host = ServerSettings.NormalizeHost(Environment.GetEnvironmentVariable("ACM_HOST") ?? "127.0.0.1");
 var bindHost = host.Contains(':') ? $"[{host}]" : host;
@@ -20,7 +25,10 @@ builder.WebHost.UseUrls($"http://{bindHost}:{port}");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 90 * 1024 * 1024);
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => o.MultipartBodyLengthLimit = Packages.MaxBytes);
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
-builder.Services.AddSingleton(new Store(root, data)); builder.Services.AddSingleton<JudgeQueue>(); builder.Services.AddHostedService(sp => sp.GetRequiredService<JudgeQueue>()); builder.Services.AddHostedService<Retention>();
+var configuredStore = new Store(root, data, postgresConnection);
+if (cloud) ServerSettings.ConfigureCloud(configuredStore);
+builder.Services.AddSingleton(configuredStore); builder.Services.AddSingleton<JudgeQueue>(); builder.Services.AddHostedService(sp => sp.GetRequiredService<JudgeQueue>()); builder.Services.AddHostedService<Retention>();
+builder.Services.AddSingleton<CodeforcesSync>(); builder.Services.AddHostedService(sp => sp.GetRequiredService<CodeforcesSync>());
 builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(data, "logs")));
 var app = builder.Build();
 var token = ServerSettings.Token(data);
@@ -29,7 +37,7 @@ var store = app.Services.GetRequiredService<Store>();
 // Hashing a decoy password once at startup keeps login timing flat whether or not a student id exists.
 var dummyHash = PasswordHasher.Hash("acm-decoy-password");
 Console.WriteLine($"ACM Local Judge: http://{bindHost}:{port}");
-Console.WriteLine($"API 访问令牌：{token}");
+if (!cloud) Console.WriteLine($"API 访问令牌：{token}");
 Console.WriteLine("管理端 /admin 与管理接口使用此令牌；选手在 OJ 页面注册登录后使用。");
 // Served for /admin until the visitor presents a valid token; the admin console itself never
 // reaches an unauthenticated browser.
@@ -45,6 +53,14 @@ app.Use(async (ctx, next) =>
             if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !allowed.Contains(ServerSettings.NormalizeHost(uri.Host), StringComparer.Ordinal)) { ctx.Response.StatusCode = 403; return; }
     var remote = ctx.Connection.RemoteIpAddress;
     var path = ctx.Request.Path;
+    if (path.StartsWithSegments("/api/worker"))
+    {
+        var workerToken = Environment.GetEnvironmentVariable("ACM_WORKER_TOKEN");
+        var authorization = ctx.Request.Headers.Authorization.ToString();
+        if (!cloud || string.IsNullOrEmpty(workerToken) || !authorization.StartsWith("Bearer ") || !FixedTimeEquals(authorization[7..], workerToken))
+        { ctx.Response.StatusCode = 401; return; }
+        await next(); return;
+    }
     bool admin = IsAdminRequest(ctx.Request);
     string header = ctx.Request.Headers.Authorization.ToString();
     string? provided = header.StartsWith("Bearer ") ? header[7..].Trim() : ctx.Request.Cookies[ServerSettings.CookieName];
@@ -129,14 +145,16 @@ app.MapGet("/healthz", (JudgeQueue q) => Results.Ok(new { app = "acm-local-judge
 app.MapPost("/api/auth", (AuthBody body, HttpContext ctx) =>
 {
     if (body.Token == null || !FixedTimeEquals(body.Token, token)) { ctx.Response.StatusCode = 401; return Results.Json(new { error = "令牌不正确" }, statusCode: 401); }
-    ctx.Response.Cookies.Append(ServerSettings.CookieName, token, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, MaxAge = TimeSpan.FromDays(30) });
+    ctx.Response.Cookies.Append(ServerSettings.CookieName, token, new CookieOptions { HttpOnly = true, Secure = cloud, SameSite = SameSiteMode.Strict, MaxAge = TimeSpan.FromDays(30) });
     return Results.Ok();
 });
 // —— 用户系统：注册 / 登录 / 个人设置 / Codeforces 绑定 / 校内排行榜 ——
 static User CurrentUser(HttpContext ctx) => ctx.Items["acmUser"] as User ?? throw new InvalidDataException("请先登录");
-static void IssueSession(HttpContext ctx, string secret, User user) => ctx.Response.Cookies.Append(UserSessions.CookieName, UserSessions.Issue(secret, user.Id), new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, MaxAge = TimeSpan.FromDays(UserSessions.LifetimeDays) });
+void IssueSession(HttpContext ctx, string secret, User user) => ctx.Response.Cookies.Append(UserSessions.CookieName, UserSessions.Issue(secret, user.Id), new CookieOptions { HttpOnly = true, Secure = cloud, SameSite = SameSiteMode.Strict, MaxAge = TimeSpan.FromDays(UserSessions.LifetimeDays) });
 app.MapPost("/api/users/register", (RegisterBody body, Store s, HttpContext ctx) =>
 {
+    if (cloud && !FixedTimeEquals(body.InviteCode ?? "", Environment.GetEnvironmentVariable("ACM_REGISTRATION_CODE")!))
+        return Results.Json(new { error = "请输入管理员提供的注册邀请码" }, statusCode: 403);
     var user = new User { StudentId = (body.StudentId ?? "").Trim(), Name = (body.Name ?? "").Trim(), Email = (body.Email ?? "").Trim().ToLowerInvariant() };
     User.ValidatePassword(body.Password ?? "");
     user.PasswordHash = PasswordHasher.Hash(body.Password ?? "");
@@ -181,46 +199,54 @@ app.MapPost("/api/users/me/codeforces", (CfBody body, Store s, HttpContext ctx) 
     if (s.Users().Any(u => u.Id != user.Id && u.CodeforcesHandle.Equals(handle, StringComparison.OrdinalIgnoreCase))) throw new InvalidDataException("该 Codeforces 账号已被其他用户绑定");
     return new { code = Codeforces.IssueChallenge(user.Id, handle), minutes = Codeforces.ChallengeMinutes };
 });
-app.MapPost("/api/users/me/codeforces/verify", async (CfVerifyBody body, Store s, HttpContext ctx, CancellationToken ct) =>
+app.MapGet("/api/users/me/codeforces/challenge", (HttpContext ctx) => new { challenge = Codeforces.PendingChallenge(CurrentUser(ctx).Id) });
+app.MapPost("/api/users/me/codeforces/verify", async (CfVerifyBody body, Store s, CodeforcesSync sync, HttpContext ctx, CancellationToken ct) =>
 {
     var user = CurrentUser(ctx);
     var (handle, expected) = Codeforces.TakeChallenge(user.Id);
     if (!string.Equals((body.Code ?? "").Trim(), expected, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("验证码不正确");
-    var info = (await Codeforces.FetchAsync([handle], ct)).FirstOrDefault(i => i.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) ?? throw new InvalidDataException("Codeforces 上未找到该 handle");
-    if (!string.Equals((info.LastName ?? "").Trim(), expected, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("验证失败：请确认已把 Codeforces 资料的 Last name 修改为验证码并保存后重试");
+    var info = (await Codeforces.FetchAsync([handle], ct, fresh: true)).FirstOrDefault(i => i.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) ?? throw new InvalidDataException("Codeforces 上未找到该 handle");
+    if (Codeforces.TakeChallenge(user.Id) != (handle, expected)) throw new InvalidDataException("验证码已更新，请使用当前验证码");
+    if (!string.Equals((info.LastName ?? "").Trim(), expected, StringComparison.OrdinalIgnoreCase))
+        return Results.Json(new { status = "pending", retryAfterSeconds = 10, message = "CF 接口尚未返回此验证码。请确认已保存 Last name；若已保存，请保持验证码不变，等待自动重试。", challenge = Codeforces.PendingChallenge(user.Id) }, statusCode: 202);
+    user = s.User(user.Id) ?? throw new InvalidDataException("账号不存在");
     user.CodeforcesHandle = info.Handle; user.CodeforcesRating = info.Rating; user.CodeforcesRank = info.Rank; user.RatingUpdatedAt = DateTimeOffset.UtcNow;
+    user.CodeforcesBindingVersion = Guid.NewGuid().ToString("N");
     s.SaveUser(user, false);
     Codeforces.ClearChallenge(user.Id);
-    return new { user = PublicViews.User(user) };
+    sync.Enqueue(user);
+    return Results.Ok(new { status = "verified", user = PublicViews.User(user) });
 });
 app.MapDelete("/api/users/me/codeforces", (Store s, HttpContext ctx) =>
 {
     var user = CurrentUser(ctx);
     user.CodeforcesHandle = ""; user.CodeforcesRating = null; user.CodeforcesRank = ""; user.RatingUpdatedAt = null;
+    user.CodeforcesBindingVersion = Guid.NewGuid().ToString("N");
     s.SaveUser(user, false);
+    s.ClearCfHistory(user.Id); Codeforces.ClearChallenge(user.Id);
     return new { user = PublicViews.User(user) };
 });
-app.MapGet("/api/leaderboard", async (Store s, CancellationToken ct) =>
+app.MapPost("/api/users/me/codeforces/sync", (CodeforcesSync sync, HttpContext ctx) => Results.Accepted(value: sync.Enqueue(CurrentUser(ctx))));
+app.MapGet("/api/users/me/codeforces/history", (Store s, CodeforcesSync sync, HttpContext ctx, int? page, string? view) =>
+{
+    var user = CurrentUser(ctx);
+    var history = s.CfHistory(user);
+    var submissions = history?.Submissions ?? [];
+    var solved = submissions.Where(s => s.Verdict == "OK").DistinctBy(s => s.Problem.Key).ToList();
+    var rows = view == "solved" ? solved : submissions;
+    var pageCount = Math.Max(1, (rows.Count + 49) / 50);
+    var currentPage = Math.Clamp(page ?? 1, 1, pageCount);
+    ctx.Response.Headers.CacheControl = "no-store";
+    return new { handle = user.CodeforcesHandle, updatedAt = history?.UpdatedAt, sync = sync.State(user), submissionCount = submissions.Count, solvedCount = solved.Count,
+        page = currentPage, pageCount, items = rows.Skip((currentPage - 1) * 50).Take(50), user = PublicViews.User(user) };
+});
+app.MapGet("/api/leaderboard", (Store s, CodeforcesSync sync) =>
 {
     var users = s.Users();
-    // Refresh bindings older than an hour in one batched CF call; an unreachable CF API keeps the
-    // cached values (with their timestamps) instead of failing the whole board.
+    // Never hold the leaderboard request open while CF is unreachable. The background job updates
+    // rating and history together and protects the current account against stale network responses.
     var stale = users.Where(u => u.CodeforcesHandle != "" && (u.RatingUpdatedAt == null || DateTimeOffset.UtcNow - u.RatingUpdatedAt > TimeSpan.FromHours(1))).ToList();
-    if (stale.Count > 0)
-    {
-        try
-        {
-            var infos = await Codeforces.FetchAsync(stale.Select(u => u.CodeforcesHandle), ct);
-            foreach (var user in stale)
-            {
-                var info = infos.FirstOrDefault(i => i.Handle.Equals(user.CodeforcesHandle, StringComparison.OrdinalIgnoreCase));
-                if (info == null) continue;
-                user.CodeforcesRating = info.Rating; user.CodeforcesRank = info.Rank; user.RatingUpdatedAt = DateTimeOffset.UtcNow;
-                s.SaveUser(user, false);
-            }
-        }
-        catch (InvalidDataException) { /* CF 不可达时沿用缓存 */ }
-    }
+    foreach (var user in stale) sync.Enqueue(user, automatic: true);
     var stats = new Dictionary<string, (HashSet<string> Problems, int Submissions, DateTimeOffset? LastAc)>();
     foreach (var sub in s.AllSubmissions())
     {
@@ -261,10 +287,11 @@ app.MapGet("/api/environment", (JudgeQueue q, HttpContext ctx) =>
 {
     string compiler = ServerSettings.Compiler(data);
     bool admin = ctx.Items["acmAdmin"] is true;
-    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler = admin ? compiler : "", compilerExists = admin && File.Exists(compiler), workerReady = File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), standard = "C++23", memoryMetric = OperatingSystem.IsWindows() ? "Windows 提交内存峰值" : "Linux RSS 峰值", trustedOnly = true, parallelism = ServerSettings.Parallelism(data), rateLimit = admin ? ServerSettings.RateLimit(data) : 0, judging = q.Running, queued = q.Queued };
+    return new { app = "acm-local-judge", os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, compiler = admin ? compiler : "", compilerExists = admin && !cloud && File.Exists(compiler), workerReady = cloud ? store.RemoteWorkerReady : File.Exists(Path.Combine(root, "artifacts/worker/Judge.Worker.dll")), remoteWorker = cloud, standard = "C++23", memoryMetric = cloud ? "由评测端记录（Windows 提交内存峰值）" : OperatingSystem.IsWindows() ? "Windows 提交内存峰值" : "Linux RSS 峰值", trustedOnly = true, parallelism = cloud ? 1 : ServerSettings.Parallelism(data), rateLimit = admin ? ServerSettings.RateLimit(data) : 0, judging = q.Running, queued = q.Queued };
 });
 app.MapPut("/api/settings", (Dictionary<string,string> values) =>
 {
+    if (cloud) throw new InvalidDataException("云端编译器和并行能力由本机评测端配置，请修改 start-agent.ps1 启动参数");
     if (!values.TryGetValue("compiler", out var path) || !Path.IsPathFullyQualified(path) || !File.Exists(path) || OperatingSystem.IsWindows() && !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("请填写现有编译器的绝对路径");
     if (!values.TryGetValue("parallelism", out var raw) || !int.TryParse(raw, out var parallelism) || parallelism is < 1 or > ServerSettings.MaxParallelism) throw new InvalidDataException("并行评测数必须是 1–8 的整数");
     ServerSettings.Save(data, path, parallelism); return Results.Ok();
@@ -336,60 +363,20 @@ app.MapPost("/api/packages/preview", async (HttpRequest req, CancellationToken c
 app.MapPost("/api/problems/{id}/harden", async (string id, HardenBody body, Store s, CancellationToken ct) =>
 {
     var p = s.Problem(id) ?? throw new KeyNotFoundException("题目不存在");
-    var inputs = (body.Tests ?? []).Select(t => (t.Input ?? "").TrimEnd() + "\n").Where(x => x.Trim().Length > 0).ToList();
-    if (inputs.Count == 0) throw new InvalidDataException("请提供要强化测试的输入数据");
-    if (inputs.Count > 20) throw new InvalidDataException("单次最多强化 20 个测试点");
-    if (inputs.Any(x => x.Length > 1024 * 1024)) throw new InvalidDataException("单个输入不能超过 1 MiB");
-    if (string.IsNullOrWhiteSpace(p.ExampleSource)) throw new InvalidDataException("请先在「编辑题目 → 标准答案」中填写标准答案源码");
-    var dir = Path.Combine(Path.GetTempPath(), "acm-harden-" + Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(dir);
-    try
-    {
-        var exe = Path.Combine(dir, OperatingSystem.IsWindows() ? "sol.exe" : "sol");
-        var compileLog = await CompileSource(ServerSettings.Compiler(data), p.ExampleSource, dir, exe, ct);
-        if (compileLog != null) throw new InvalidDataException("标准答案源码编译失败：" + Truncate(compileLog, 800));
-        var used = p.Tests.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < inputs.Count; i++)
-        {
-            var run = await RunSandboxed(exe, dir, inputs[i], p.Limits, ct);
-            if (run.Verdict == "TLE") throw new InvalidDataException($"第 {i + 1} 条输入：标准答案运行超时，数据可能超出题目约束");
-            if (run.Verdict == "OLE") throw new InvalidDataException($"第 {i + 1} 条输入：答案超过题目输出上限");
-            if (run.Verdict != "AC") throw new InvalidDataException($"第 {i + 1} 条输入：标准答案运行异常（{run.Verdict}），数据可能违反输入约束");
-            int n = p.Tests.Count;
-            string name;
-            do { n++; name = "h" + n.ToString("00"); } while (!used.Add(name));
-            // Windows 管道文本模式会把 \n 转成 \r\n；答案统一归一化为 LF，与手写测试数据一致。
-            p.Tests.Add(new TestData(name, inputs[i], run.Stdout.Replace("\r\n", "\n")));
-        }
-        return s.Save(p, false);
-    }
-    finally { try { Directory.Delete(dir, true); } catch { /* 临时目录失败时留给系统清理 */ } }
+    var additions = s.IsPostgres
+        ? (await s.AuthoringRemote("harden", p, "", (body.Tests ?? []).Select(t => new RemoteInput(t.Input, t.Answer)).ToList(), ct)).Tests ?? throw new InvalidDataException("评测端未返回测试数据")
+        : await AuthoringJudge.Harden(p, body.Tests ?? [], ServerSettings.Compiler(data), Path.Combine(root, "toolkit"), ct);
+    p.Tests.AddRange(additions);
+    return s.Save(p, false);
 });
-// 暴力对拍：编译管理员粘贴的暴力程序，按题目限额逐测试点运行，遇到首个非 AC 即停，用于确认强化数据的强度。
+// Candidate programs run through the real checker, interactor, communication or manager protocol.
 app.MapPost("/api/problems/{id}/brute", async (string id, BruteBody body, Store s, CancellationToken ct) =>
 {
     var p = s.Problem(id) ?? throw new KeyNotFoundException("题目不存在");
-    if (string.IsNullOrWhiteSpace(body.Source)) throw new InvalidDataException("请粘贴暴力程序源码");
-    if (p.Tests.Count == 0) throw new InvalidDataException("该题目还没有测试点");
-    var dir = Path.Combine(Path.GetTempPath(), "acm-brute-" + Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(dir);
-    try
-    {
-        var exe = Path.Combine(dir, OperatingSystem.IsWindows() ? "brute.exe" : "brute");
-        var compileLog = await CompileSource(ServerSettings.Compiler(data), body.Source, dir, exe, ct);
-        if (compileLog != null) throw new InvalidDataException("暴力程序编译失败：" + Truncate(compileLog, 800));
-        var results = new List<object>(p.Tests.Count);
-        foreach (var test in p.Tests)
-        {
-            var r = await RunSandboxed(exe, dir, test.Input, p.Limits, ct);
-            // NativeRunner 只给沙箱级判定（正常退出=AC）；答案比对在这里按 judge 的 token 语义完成。
-            var verdict = r.Verdict != "AC" ? r.Verdict : Tokens(r.Stdout).SequenceEqual(Tokens(test.Answer)) ? "AC" : "WA";
-            results.Add(new { name = test.Name, verdict, cpuMs = Math.Round(r.Usage.CpuMs) });
-            if (verdict != "AC") return Results.Ok(new { results, stopped = true });
-        }
-        return Results.Ok(new { results, stopped = false });
-    }
-    finally { try { Directory.Delete(dir, true); } catch { /* 临时目录失败时留给系统清理 */ } }
+    var result = s.IsPostgres
+        ? (await s.AuthoringRemote("brute", p, body.Source ?? "", null, ct)).Result ?? throw new InvalidDataException("评测端未返回结果")
+        : await AuthoringJudge.Brute(p, body.Source ?? "", ServerSettings.Compiler(data), Path.Combine(root, "toolkit"), ct);
+    return Results.Ok(new { results = result.Cases.Select(c => new { name = c.Name, verdict = c.Verdict, cpuMs = Math.Round(c.CpuMs), message = c.Message }), stopped = result.Status != "AC" });
 });
 // 整题重测：与单提交 rejudge 用旧快照不同，这里用当前题目对象（含刚强化的测试点）重建快照，
 // 该题全部历史提交按新数据重新入队，作者归属保持不变。
@@ -400,36 +387,13 @@ app.MapPost("/api/problems/{id}/rejudge-all", (string id, Store s, JudgeQueue q)
     foreach (var sid in s.SubmissionIdsForProblem(id))
     {
         var old = s.Submission(sid);
-        var requestFile = Path.Combine(s.SubmissionDir(sid), "request.json");
-        if (old == null || !File.Exists(requestFile)) continue;
-        var request = Json.Read<JudgeRequest>(File.ReadAllText(requestFile));
-        var submission = s.AddSubmission(p, request.Source, request.Compiler, old.UserId, request.ToolkitPath);
+        if (old == null) continue;
+        var request = s.Request(sid);
+        var submission = s.AddSubmission(p, request.Source, request.Compiler, old.UserId, request.ToolkitPath, sid);
         q.Add(submission.Id); count++;
     }
     return Results.Ok(new { requeued = count });
 });
-static string Truncate(string text, int max) => text.Length <= max ? text : text[..max] + "…";
-static string[] Tokens(string text) => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-
-// 用沙箱编译一份 C++ 源码；成功返回 null，失败返回编译日志。
-static async Task<string?> CompileSource(string compiler, string source, string workDir, string outputExe, CancellationToken ct)
-{
-    var src = Path.Combine(workDir, "sol.cpp");
-    await File.WriteAllTextAsync(src, source, new UTF8Encoding(false), ct);
-    string[] args = ["-std=c++23", "-O2", "-pipe", src, "-o", outputExe];
-    await using var runner = new NativeRunner(compiler, args, workDir, new() { CpuMs = 60000, WallMs = 60000, MemoryMiB = 1024, OutputKiB = 1024 }, ct, processLimit: 32);
-    await runner.CloseInput();
-    var r = await runner.Completion;
-    return r.Verdict == "AC" ? null : r.Stdout + r.Stderr;
-}
-// 在题目限额下用沙箱运行已编译程序。
-static async Task<RunResult> RunSandboxed(string exe, string workDir, string input, Limits limits, CancellationToken ct)
-{
-    await using var runner = new NativeRunner(exe, [], workDir, limits, ct);
-    var feed = Task.Run(async () => { await runner.Send(input); await runner.CloseInput(); });
-    var r = await runner.Completion; await feed;
-    return r;
-}
 app.MapWorkspaceEndpoints();
 app.MapGet("/api/submissions", (Store s, HttpContext ctx) =>
 {
@@ -455,7 +419,7 @@ app.MapGet("/api/submissions/{id}", (string id, Store s, HttpContext ctx) =>
     var name = submission.UserId == null ? "" : s.Users().FirstOrDefault(u => u.Id == submission.UserId)?.Name ?? "";
     // 源码只对作者本人与管理员可见（CF 语义：练习期可看自己的，别人的只有结果行）。
     bool canViewSource = ctx.Items["acmAdmin"] is true || submission.UserId != null && submission.UserId == (ctx.Items["acmUser"] as User)?.Id;
-    return new { submission, result = s.Result(id), context = SubmissionViews.Context(s,id), source = canViewSource ? File.ReadAllText(Path.Combine(s.SubmissionDir(id), "source.cpp")) : "", userName = name, canViewSource };
+    return new { submission, result = s.Result(id), context = SubmissionViews.Context(s,id), source = canViewSource ? s.Request(id).Source : "", userName = name, canViewSource };
 });
 app.MapPost("/api/submissions/{id}/cancel", (string id, JudgeQueue q, Store s, HttpContext ctx) =>
 {
@@ -466,9 +430,9 @@ app.MapPost("/api/submissions/{id}/cancel", (string id, JudgeQueue q, Store s, H
 app.MapPost("/api/submissions/{id}/rejudge", (string id, Store s, JudgeQueue q) =>
 {
     var oldSubmission = s.Submission(id) ?? throw new KeyNotFoundException("提交不存在");
-    var old = Json.Read<JudgeRequest>(File.ReadAllText(Path.Combine(s.SubmissionDir(id), "request.json")));
+    var old = s.Request(id);
     // Rejudging keeps the original author so per-user stats stay consistent.
-    var submission = s.AddSubmission(old.Problem, old.Source, old.Compiler, oldSubmission.UserId, old.ToolkitPath); q.Add(submission.Id); return submission;
+    var submission = s.AddSubmission(old.Problem, old.Source, old.Compiler, oldSubmission.UserId, old.ToolkitPath, id); q.Add(submission.Id); return submission;
 });
 app.MapGet("/api/submissions/{id}/events", async (string id, HttpContext ctx, Store s) =>
 {
@@ -482,17 +446,18 @@ app.MapGet("/api/submissions/{id}/events", async (string id, HttpContext ctx, St
         string value = JsonSerializer.Serialize(new { submission, result, context }, Json.Compact);
         if (value != previous) { await ctx.Response.WriteAsync("data: " + value + "\n\n", ctx.RequestAborted); await ctx.Response.Body.FlushAsync(ctx.RequestAborted); previous = value; }
         if (!JudgeQueue.IsActive(submission.Status)) break;
-        await Task.Delay(300, ctx.RequestAborted);
+        await Task.Delay(s.IsPostgres ? 2000 : 300, ctx.RequestAborted);
     }
 });
+app.MapPost("/api/worker/claim", (Store s) => s.ClaimRemote() is { } claim ? Results.Ok(claim) : Results.NoContent());
+app.MapPost("/api/worker/{id}/heartbeat", (string id, RemoteHeartbeat body, Store s) => s.HeartbeatRemote(id, body) ? Results.Ok() : Results.Conflict());
 app.MapFallbackToFile("index.html");
 await app.RunAsync();
 record SubmitBody(string ProblemId, string Source, string? Purpose = null);
 record HardenBody(List<TestInput>? Tests);
-record TestInput(string Input);
 record BruteBody(string? Source);
 record AuthBody(string? Token);
-record RegisterBody(string? StudentId, string? Name, string? Email, string? Password);
+record RegisterBody(string? StudentId, string? Name, string? Email, string? Password, string? InviteCode = null);
 record LoginBody(string? StudentId, string? Password);
 record ProfileBody(string? Name, string? Email, bool? Anonymous);
 record PasswordBody(string? CurrentPassword, string? NewPassword);

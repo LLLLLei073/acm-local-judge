@@ -10,18 +10,29 @@ public sealed class JudgeQueue(Store store, ILogger<JudgeQueue> logger) : Backgr
     private readonly List<Task> active = [];
     private int runningCount;
     private int queuedCount;
-    public void Add(string id) { if (queue.Writer.TryWrite(id)) Interlocked.Increment(ref queuedCount); }
-    public int Running => Volatile.Read(ref runningCount);
-    public int Queued => Volatile.Read(ref queuedCount);
+    public void Add(string id) { if (!store.IsPostgres && queue.Writer.TryWrite(id)) Interlocked.Increment(ref queuedCount); }
+    public int Running => store.IsPostgres ? store.RemoteCount("Running") : Volatile.Read(ref runningCount);
+    public int Queued => store.IsPostgres ? store.RemoteCount("Queued") : Volatile.Read(ref queuedCount);
     public void Cancel(string id)
     {
         var s = store.Submission(id) ?? throw new KeyNotFoundException("提交不存在");
         if (!IsActive(s.Status)) return;
+        if (store.IsPostgres) { store.CancelRemote(id); return; }
         File.WriteAllText(Path.Combine(store.SubmissionDir(id), "cancel"), "1"); store.Status(id, "Cancelled");
     }
     public static bool IsActive(string status) => status is "Queued" or "Compiling" or "Running";
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (store.IsPostgres)
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try { store.ExpireRemote(); await Task.Delay(15000, stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                catch (Exception ex) { logger.LogError(ex, "远程任务维护失败"); await Task.Delay(15000, stoppingToken); }
+            }
+            return;
+        }
         try
         {
             await foreach (var id in queue.Reader.ReadAllAsync(stoppingToken))

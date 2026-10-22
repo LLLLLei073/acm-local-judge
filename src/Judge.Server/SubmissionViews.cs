@@ -9,9 +9,8 @@ public static class SubmissionViews
     // Only public metadata leaves the immutable request; never return judge sources or hidden tests.
     public static SubmissionContext? Context(Store store, string id)
     {
-        var path=Path.Combine(store.SubmissionDir(id),"request.json");
-        if(!File.Exists(path)) return null;
-        var request=Json.Read<JudgeRequest>(File.ReadAllText(path));
+        if (store.Submission(id) == null) return null;
+        var request=store.Request(id);
         var p=request.Problem;
         return new(p.Title,p.Mode,p.Limits,p.Tests.Count);
     }

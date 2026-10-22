@@ -1,9 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { solvedIds, latestByProblem, trainingSummary, resourcePercent, readiness, pairTestFiles, draftKey, saveLocal, filterTrace, verdictAdvice } from '../src/domain/workbench.ts';
+import { solvedIds, latestByProblem, trainingSummary, resourcePercent, readiness, pairTestFiles, draftKey, saveLocal, filterTrace, verdictAdvice, filterLeaderboardRows } from '../src/domain/workbench.ts';
 import { flowIssues, newFlow, newStep } from '../src/flow.ts';
 
 const submission=(id,problemId,status,createdAt)=>({id,problemId,status,createdAt});
+test('leaderboard search never matches hidden identities or pins an unrelated self row',()=>{
+  const rows=[{userId:'self',anonymous:true,name:'Secret Name',studentId:'20260001',cfHandle:'HiddenCf'},{userId:'peer',anonymous:false,name:'Visible Peer',studentId:'20260002',cfHandle:'PublicCf'}];
+  for(const term of ['Secret','20260001','HiddenCf','missing']) assert.deepEqual(filterLeaderboardRows(rows,term,'self'),[]);
+  assert.deepEqual(filterLeaderboardRows(rows,'我','self'),[rows[0]]);
+  assert.deepEqual(filterLeaderboardRows(rows,'  publiccf  ','self'),[rows[1]]);
+  assert.deepEqual(filterLeaderboardRows(rows,'   ','self'),rows);
+});
 const p={id:'p',title:'Sum',statement:'Input two integers and output their sum.',rating:800,mode:'Standard',tests:[{name:'01',input:'1 2\n',answer:'3\n'}],exampleSource:'int main(){}',limits:{cpuMs:2000,wallMs:10000,memoryMiB:256,outputKiB:1024},judgeLimits:{cpuMs:10000,wallMs:20000,memoryMiB:512,outputKiB:1024}};
 test('AC is retained after a later failure and histories need not arrive sorted',()=>{
   const rows=[submission('1','p','AC','2026-10-18'),submission('2','p','WA','2026-10-19'),submission('3','q','WA','2026-10-20')];

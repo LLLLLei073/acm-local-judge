@@ -28,12 +28,14 @@ const history = ref<Submission[]>([]), submission = ref<Submission>(), result = 
 const submissionContext=ref<SubmissionContext>();
 const busy = ref(false), error = ref(''), notice = ref(''), showHistory = ref(false), showContests = ref(false), showUsers = ref(false), expanded = ref<string>();
 const users = ref<{ id: string; studentId: string; name: string; email: string; cfHandle: string; cfRating: number | null; cfRank: string; siteRating: number | null; anonymous: boolean; createdAt: string }[]>([]);
+const usersLoaded = ref(false);
 const contests = ref<{ id: string; title: string; count: number; problemIds: string[]; startsAt: string | null; endsAt: string | null; rated: boolean; settled: boolean; phase: 'open' | 'upcoming' | 'running' | 'finished' }[]>([]);
 const contestDraft = ref<{ id?: string; title: string; problemIds: string[]; startsAt: string; endsAt: string; rated: boolean }>();
 const rosterSearch = ref('');
-const bruteSource = ref(''), bruteResult = ref<{ results: { name: string; verdict: string; cpuMs: number }[]; stopped: boolean }>();
+const bruteSource = ref(''), bruteResult = ref<{ results: { name: string; verdict: string; cpuMs: number; message?:string }[]; stopped: boolean }>();
 const snapshotSource = ref(''), showSnapshot = ref(false);
 const bruteEvidence=computed(()=>bruteAssessment(bruteResult.value?.results??[]));
+const bruteFailure=computed(()=>bruteResult.value?.results.find(row=>row.verdict!=='AC'));
 const draft = ref<Problem>(), editTab = ref('basic');
 const importPreview = ref<Problem>(), environment = ref<{ os: string; memoryMetric: string; compiler: string; compilerExists: boolean; workerReady: boolean; parallelism: number; judging: number; queued: number; rateLimit: number }>(), settings = ref(false), compiler = ref(''), parallelism = ref(2);
 const ai = ref(loadAiConfig()), aiBusy = ref(false), aiSuggestion = ref<{ rating: number; reason: string }>();
@@ -50,8 +52,10 @@ const visibleHistory = computed(()=>history.value.filter(s=>(s.title+' '+(s.user
 const {entries:localDrafts,open:openProblemDraft,restore:restoreProblemDraft,saved:finishProblemDraft,remove:removeProblemDraft,dirty:dirtyProblemDraft,persisted:draftPersisted,status:draftStatus}=useProblemDrafts(draft);
 const previewStatement = ref(false);
 const draftRendered = computed(()=>DOMPurify.sanitize(marked.parse(draft.value?.statement||'') as string));
-const aiPreview = ref<{problemId:string;tests:{input:string}[]}>();
+const aiPreview = ref<{problemId:string;title:string;mode:Problem['mode'];tests:{input:string;answer:string}[]}>();
+const aiCalculatesAnswer = computed(()=>aiPreview.value?.mode==='Standard'||aiPreview.value?.mode==='Special');
 const statementSuggestion = ref('');
+watch(()=>selected.value?.id,()=>{aiSuggestion.value=undefined;bruteResult.value=undefined;bruteSource.value='';});
 
 const verifyOf = (problemId: string) => history.value.filter(s => s.problemId === problemId && !s.userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 const info = computed(() => selected.value ? modeInfo(selected.value.mode) : modes[0]);
@@ -71,7 +75,7 @@ async function login() {
 async function loadList() { problems.value = await api('/problems'); }
 async function loadHistory() { history.value = await api('/submissions'); }
 async function loadContests() { contests.value = await api('/contests'); }
-async function loadUsers() { users.value = await api('/users'); }
+async function loadUsers() { users.value = await api('/users'); usersLoaded.value=true; }
 async function removeUser(u: { id: string; name: string; studentId: string }) {
   if (!confirm('删除用户「' + u.name + '（' + u.studentId + '）」？其提交记录会保留但不再显示姓名。')) return;
   await perform(async () => { await api('/users/' + u.id, { method: 'DELETE' }); await loadUsers(); notice.value = '用户已删除'; });
@@ -128,8 +132,11 @@ async function verify() {
 }
 async function runBrute() {
   if (!selected.value || busy.value) return;
+  const problem=selected.value, source=bruteSource.value;
+  bruteResult.value=undefined;
   await perform(async () => {
-    bruteResult.value = await api('/problems/' + selected.value!.id + '/brute', { method: 'POST', body: JSON.stringify({ source: bruteSource.value }) });
+    const response = await api<typeof bruteResult.value>('/problems/' + problem.id + '/brute', { method: 'POST', body: JSON.stringify({ source }) });
+    if(selected.value?.id===problem.id)bruteResult.value=response;
   });
 }
 async function rejudgeAll() {
@@ -184,7 +191,8 @@ async function aiLoadModels() {
 }
 async function aiRate() {
   if (!selected.value || aiBusy.value) return;
-  await perform(async () => { aiBusy.value = true; try { aiSuggestion.value = await suggestRating(selected.value!); } finally { aiBusy.value = false; } });
+  const problem=selected.value; aiSuggestion.value=undefined;
+  await perform(async () => { aiBusy.value = true; try { const suggestion=await suggestRating(problem); if(selected.value===problem)aiSuggestion.value=suggestion; } finally { aiBusy.value = false; } });
 }
 async function aiAdoptRating() {
   if (!selected.value || !aiSuggestion.value) return;
@@ -207,17 +215,18 @@ async function aiDraftStatement() {
 }
 async function aiHarden() {
   if (!selected.value || aiBusy.value) return;
+  const problem=selected.value;
   await perform(async () => {
     aiBusy.value = true; let gen: { tests: { input: string }[] };
-    try { gen = await generateHarshTests(selected.value!); } finally { aiBusy.value = false; }
+    try { gen = await generateHarshTests(problem); } finally { aiBusy.value = false; }
     if(!gen.tests.length) throw new Error('AI 未能依据题面约束给出可靠输入，请补充明确的数据范围后重试');
-    aiPreview.value={problemId:selected.value!.id,tests:gen.tests};
+    aiPreview.value={problemId:problem.id,title:problem.title,mode:problem.mode,tests:gen.tests.map(t=>({...t,answer:''}))};
   });
 }
 async function applyAiTests() {
   if(!aiPreview.value) return;
   const preview=aiPreview.value;
-  await perform(async()=> { const p=await api<Problem>('/problems/'+preview.problemId+'/harden',{method:'POST',body:JSON.stringify({tests:preview.tests})}); selected.value=p; aiPreview.value=undefined; await loadList(); notice.value='已计算答案并追加数据。请运行标准答案验证；AI 输入仍需检查是否满足题面约束。'; });
+  await perform(async()=> { const p=await api<Problem>('/problems/'+preview.problemId+'/harden',{method:'POST',body:JSON.stringify({tests:preview.tests})}); if(selected.value?.id===preview.problemId)selected.value=p; aiPreview.value=undefined; await loadList(); notice.value='「'+preview.title+'」新增数据已按本题协议验证并保存；仍需人工核对输入约束。'; });
 }
 function edit(p?: Problem) { const restored=openProblemDraft(p??blankProblem()); editTab.value='basic'; previewStatement.value=false; statementSuggestion.value=''; if(restored)notice.value='已恢复本题未保存草稿'; }
 function restoreDraft(id:string) { if(restoreProblemDraft(id)) { editTab.value='basic'; notice.value='已恢复本机草稿，请检查后保存'; } else error.value='该恢复点已不存在或无法读取'; }
@@ -263,7 +272,7 @@ onBeforeUnmount(() => { clearInterval(environmentClock); closeFeed(); removeEven
       <div class="side-label">管理控制台<span class="local-dot"></span></div>
       <button class="nav-item" :class="{selected: !showHistory && !showContests && !showUsers && !selected}" @click="showHistory=false; showContests=false; showUsers=false; selected=undefined"><Layers :size="17" /> 题目工作台 <span>{{ problems.length }}</span></button>
       <button class="nav-item" :class="{selected: showContests}" @click="showContests=true; showHistory=false; showUsers=false; loadContests()"><Trophy :size="16" /> 比赛管理 <span>{{ contests.length }}</span></button>
-      <button class="nav-item" :class="{selected: showUsers}" @click="showUsers=true; showHistory=false; showContests=false; loadUsers()"><Users :size="16" /> 用户管理 <span>{{ users.length }}</span></button>
+      <button class="nav-item" :class="{selected: showUsers}" @click="showUsers=true; showHistory=false; showContests=false; loadUsers()"><Users :size="16" /> 用户管理 <span v-if="usersLoaded">{{ users.length }}</span></button>
       <button class="nav-item" :class="{selected: showHistory}" @click="showHistory=true; showContests=false; showUsers=false; loadHistory()"><History :size="17" /> 提交记录 <ArrowUpRight :size="14" class="push" /></button>
       <div class="sidebar-bottom"><label class="side-import"><Upload :size="16" /> 导入题目包<input type="file" accept=".zip" hidden @change="importZip" /></label><button class="nav-item" @click="openSettings"><Settings2 :size="16" /> 运行环境</button></div>
     </aside>
@@ -292,20 +301,20 @@ onBeforeUnmount(() => { clearInterval(environmentClock); closeFeed(); removeEven
         <div class="ai-bar">
           <span class="ai-label">AI 助手</span>
           <button class="button secondary" :disabled="!aiConfigured || aiBusy" title="根据题面与类型建议 CF 风格难度" @click="aiRate"><Sparkles :size="14" />建议评级</button>
-          <button class="button secondary" :disabled="!aiConfigured || aiBusy || !selected.exampleSource.trim()" title="在题目约束内生成最严苛的测试输入（由标准答案自动计算答案后入库），卡掉高复杂度提交" @click="aiHarden"><Sparkles :size="14" />生成强化数据</button>
+          <button class="button secondary" :disabled="!aiConfigured || aiBusy || !selected.exampleSource.trim()" title="生成候选输入，经人工核对与本题协议验证后追加测试点" @click="aiHarden"><Sparkles :size="14" />生成强化数据</button>
           <template v-if="aiSuggestion"><span class="ai-suggestion">建议 <b :style="{color:ratingColor(aiSuggestion.rating)}">{{ aiSuggestion.rating }}</b> · {{ aiSuggestion.reason }}</span><button class="button primary" @click="aiAdoptRating"><Check :size="14" />采用</button><button class="icon-btn" aria-label="忽略建议" @click="aiSuggestion=undefined"><X :size="15" /></button></template>
-          <span v-else-if="aiBusy" class="muted">AI 正在分析题目…（强化数据需在服务端编译标准答案逐条运行，请稍候）</span>
+          <span v-else-if="aiBusy" class="muted">AI 正在处理建议，请稍候。生成后仍需人工检查；追加数据时会运行标准答案验证。</span>
           <span v-else-if="!aiConfigured" class="muted">在「运行环境」中配置 AI 后，可一键建议评级、生成卡高复杂度的强化数据</span>
         </div>
         <div class="work-grid">
           <section class="work-panel">
             <div class="statement-area"><div class="mode-callout" :style="{'--mode':info.color}"><span class="callout-icon"><FlaskConical :size="19" /></span><div><strong>{{ info.label }}</strong><p>{{ info.description }}</p></div></div><article class="markdown" v-html="rendered"></article><FlowPreview v-if="selected.mode==='Multiprocess' && selected.flow" :flow="selected.flow" :test="selected.tests[0]" /><div v-if="selected.protocol" class="protocol-note"><strong>读写约定</strong><p>{{ selected.protocol }}</p></div><div class="sample-grid" v-if="selected.tests[0]"><div><div class="sample-label">{{ selected.mode === 'Multiprocess' ? '测试数据（仅调度器读取）' : '示例输入' }}</div><pre>{{ selected.tests[0].input || '（由评测程序提供）' }}</pre></div><div><div class="sample-label">{{ selected.mode === 'Multiprocess' ? '参考判定（仅调度器读取）' : '参考答案' }}</div><pre>{{ selected.tests[0].answer || '（由判题程序决定）' }}</pre></div></div></div>
             <div class="submit-bar verify-bar"><div><span class="language-pill">验题</span><span class="muted">运行标准答案源码，检验全部测试点（含强化数据）</span></div><div class="verify-actions"><button v-if="running" class="button secondary" @click="cancel"><Square :size="14" />取消验证</button><button v-else class="button primary" :disabled="busy || !selected.exampleSource.trim() || !selected.tests.length" @click="verify"><Play :size="15" fill="currentColor" />用标准答案验证</button><button v-if="!running" class="button secondary" :disabled="busy || !selected.tests.length" title="把该题历史提交按当前测试数据全部重新评测" @click="rejudgeAll"><RefreshCw :size="14" />整题重测</button></div></div>
-            <p v-if="!selected.exampleSource.trim()" class="muted verify-hint">还没有标准答案源码：在「编辑题目 → 标准答案」中填写后即可一键验证，强化数据的答案也由它计算。</p>
-            <details v-else class="brute-panel"><summary>暴力对拍<span class="muted"> —— 粘贴一段复杂度不达标的程序，确认强化数据能卡掉它</span></summary>
-              <textarea v-model="bruteSource" rows="5" placeholder="#include <bits/stdc++.h> ... int main(){ /* O(n²) 暴力 */ }"></textarea>
+            <p v-if="!selected.exampleSource.trim()" class="muted verify-hint">请在「编辑题目 → 标准答案」填写源码，用于验题和验证新数据；标准题与特判题还可自动计算答案。</p>
+            <details v-else class="brute-panel"><summary>暴力对拍<span class="muted"> —— 按本题协议检查候选程序，定位首次失败</span></summary>
+              <textarea v-model="bruteSource" rows="5" aria-label="候选程序源码" placeholder="#include <bits/stdc++.h> ... int main(){ /* 候选解法 */ }"></textarea>
               <div class="brute-actions"><button class="button primary" :disabled="busy || !bruteSource.trim() || !selected.tests.length" @click="runBrute"><Play :size="14" />运行对拍</button><span class="muted">按题目限制逐测试点运行，遇到首个非 AC 即停止</span></div>
-              <div v-if="bruteResult" class="brute-result"><div class="brute-cases"><span v-for="r in bruteResult.results" :key="r.name" class="brute-case"><b>#{{ r.name }}</b><span :class="r.verdict==='AC'?'success-text':'danger-text'">{{ r.verdict }}</span><small>{{ r.cpuMs.toFixed(0) }} ms</small></span></div><p :class="bruteEvidence.tone">{{ bruteEvidence.text }}</p></div>
+              <div v-if="bruteResult" class="brute-result"><div class="brute-cases"><span v-for="r in bruteResult.results" :key="r.name" :title="r.message" class="brute-case"><b>#{{ r.name }}</b><span :class="r.verdict==='AC'?'success-text':'danger-text'">{{ r.verdict }}</span><small>{{ r.cpuMs.toFixed(0) }} ms</small></span></div><p v-if="bruteFailure?.message" class="muted">#{{ bruteFailure.name }}：{{ bruteFailure.message }}</p><p :class="bruteEvidence.tone">{{ bruteEvidence.text }}</p></div>
             </details>
           </section>
           <JudgeResult :result="result" :submission="submission" :limits="submissionContext?.limits" :total="submissionContext?.testCount ?? result?.cases.length ?? 0" :mode="submissionContext?.mode ?? submission?.mode ?? selected?.mode" :connection="connection" :memory-metric="environment?.memoryMetric" source-visible title="验证结果" @inspect="expanded=$event" @source="showSnapshot=true" @refresh="submission && openSubmission(submission.id)"><template #actions><button class="text-link" :disabled="busy||!!running" @click="rejudge">原快照重评</button></template></JudgeResult>
@@ -338,7 +347,7 @@ onBeforeUnmount(() => { clearInterval(environmentClock); closeFeed(); removeEven
 
     <div v-if="importPreview" class="modal-backdrop"><section class="modal small-modal" role="dialog" aria-modal="true" aria-label="导入题目包"><header class="modal-header"><h2>题目包预览</h2><button class="icon-btn" aria-label="关闭导入" @click="importPreview=undefined"><X :size="20" /></button></header><div class="modal-body"><div v-if="error" class="alert">{{ error }}</div><h3>{{ importPreview.title }}</h3><p>{{ modeInfo(importPreview.mode).label }} · {{ importPreview.tests.length }} 个测试点 · 难度 <b :style="{color:ratingColor(importPreview.rating)}">{{ importPreview.rating || '未评级' }}</b> · CPU {{ importPreview.limits.cpuMs }}ms / {{ importPreview.limits.memoryMiB }}MiB</p><p class="muted">校验完成。将创建新草稿，现有题目不会被覆盖。核对数据并用标准答案验证后再发布。</p><div class="import-summary"><span>题面 {{ importPreview.statement.length }} 字符</span><span>{{ importPreview.exampleSource ? '包含标准答案源码' : '尚无标准答案源码' }}</span><span v-if="importPreview.flow">{{ importPreview.flow.members.length }} 位成员 · {{ importPreview.flow.steps.length }} 个通信步骤</span><span>工具：{{ [importPreview.checker?'checker':'',importPreview.interactor?'interactor':'',importPreview.manager?'manager':''].filter(Boolean).join(' / ')||'引擎内置判定' }}</span></div><div class="import-files"><span v-for="t in importPreview.tests"><FileCode2 :size="14" />{{ t.name }}.in / .ans</span></div></div><footer class="modal-footer"><button class="button primary" :disabled="busy" @click="confirmImport"><Upload :size="15" />导入为草稿</button></footer></section></div>
 
-    <div v-if="aiPreview" class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="AI 测试数据预览"><header class="modal-header"><div><span class="eyebrow">AI PROPOSAL</span><h2>检查输入，再计算答案</h2></div><button class="icon-btn" aria-label="关闭预览" :disabled="busy" @click="aiPreview=undefined"><X :size="20" /></button></header><div class="modal-body"><p class="protocol-note">以下是 AI 提出的输入，尚未写入题目。请检查规模与约束；应用后由标准答案计算答案。可删除不合法的数据。</p><article v-for="(t,i) in aiPreview.tests" :key="i" class="test-editor"><div class="section-toolbar"><b>建议 {{ i+1 }}</b><button class="text-link danger-text" :disabled="busy" @click="aiPreview.tests.splice(i,1)">移除此项</button></div><textarea v-model="t.input" :readonly="busy" rows="6" class="full-width" :aria-label="'建议输入 '+(i+1)"></textarea></article></div><footer class="modal-footer"><button class="button secondary" :disabled="busy" @click="aiPreview=undefined">取消</button><button class="button primary" :disabled="busy||!aiPreview.tests.length" @click="applyAiTests">计算答案并追加 {{ aiPreview.tests.length }} 个测试点</button></footer></section></div>
+    <div v-if="aiPreview" class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="AI 测试数据预览"><header class="modal-header"><div><span class="eyebrow">AI PROPOSAL · {{ aiPreview.title }}</span><h2>{{ aiCalculatesAnswer?'检查输入，再计算答案':'检查输入与参考判定' }}</h2></div><button class="icon-btn" aria-label="关闭预览" :disabled="busy" @click="aiPreview=undefined"><X :size="20" /></button></header><div class="modal-body"><div v-if="error" class="alert" role="alert">{{ error }}</div><p class="protocol-note">建议尚未写入题目。请检查数据规模与输入约束，可修改或移除建议。{{ aiCalculatesAnswer?'标准答案会先计算答案，再由本题判题规则验证。':'请按判题协议填写参考判定；判题器不读取 .ans 时可留空。标准答案将与交互器、双轮调度器或多进程管理器真实运行，全部通过后再保存。' }}</p><article v-for="(t,i) in aiPreview.tests" :key="i" class="test-editor"><div class="section-toolbar"><b>建议 {{ i+1 }}</b><button class="text-link danger-text" :disabled="busy" @click="aiPreview.tests.splice(i,1)">移除此项</button></div><label :for="'ai-input-'+i">测试输入</label><textarea :id="'ai-input-'+i" v-model="t.input" :readonly="busy" rows="6" class="full-width" :aria-label="'建议输入 '+(i+1)"></textarea><label v-if="!aiCalculatesAnswer">参考判定 .ans<textarea v-model="t.answer" :readonly="busy" rows="3" class="full-width" :aria-label="'建议参考判定 '+(i+1)"></textarea></label></article></div><footer class="modal-footer"><button class="button secondary" :disabled="busy" @click="aiPreview=undefined">取消</button><button class="button primary" :disabled="busy||!aiPreview.tests.length" @click="applyAiTests">{{ aiCalculatesAnswer?'计算答案并验证':'按协议验证' }}，追加 {{ aiPreview.tests.length }} 个测试点</button></footer></section></div>
     <div v-if="statementSuggestion && draft" class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="AI 题面预览"><header class="modal-header"><h2>AI 题面建议</h2><button class="icon-btn" aria-label="关闭题面建议" @click="statementSuggestion=''"><X :size="20" /></button></header><div class="modal-body"><p class="protocol-note">建议尚未覆盖原稿。应用后请核对约束、协议与样例。</p><pre>{{ statementSuggestion }}</pre></div><footer class="modal-footer"><button class="button secondary" @click="statementSuggestion=''">保留原稿</button><button class="button primary" @click="draft.statement=statementSuggestion; statementSuggestion=''">应用到草稿</button></footer></section></div>
     <div v-if="showSnapshot" class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="提交源码"><header class="modal-header"><h2>本次验证源码 · {{ submission?.title }}</h2><button class="icon-btn" aria-label="关闭源码" @click="showSnapshot=false"><X :size="20" /></button></header><CodeEditor v-model="snapshotSource" read-only /></section></div>
     <div v-if="settings" class="modal-backdrop"><section class="modal small-modal" role="dialog" aria-modal="true" aria-label="运行环境"><header class="modal-header"><h2>运行环境</h2><button class="icon-btn" aria-label="关闭设置" @click="settings=false"><X :size="20" /></button></header><div class="modal-body"><div v-if="error" class="alert">{{ error }}</div><div class="environment-status"><span class="local-dot"></span>{{ osName }} · C++23</div><p>编译器 {{ environment?.compilerExists?'已找到':'未找到' }} · Worker {{ environment?.workerReady?'就绪':'需要构建' }}</p><label>G++ 编译器完整路径<input v-model="compiler" /></label><p class="muted">默认参数：-std=c++23 -O2 -pipe</p><label>并行评测数（1–8）<input type="number" v-model.number="parallelism" min="1" max="8" /></label><p class="muted">同时评测的提交数，保存后立即生效。当前评测中 {{ environment?.judging ?? 0 }} · 排队 {{ environment?.queued ?? 0 }} · 每 IP 提交限流 {{ environment?.rateLimit ?? '—' }} 次/分钟（0 = 关闭）。</p><div class="ai-config"><h3>AI 助手（LangChain）</h3><div class="form-grid"><label>API Base URL<input v-model="ai.base" placeholder="https://api.deepseek.com/v1" /></label><div class="model-field"><label class="grow">模型<input v-model="ai.model" list="ai-model-options" placeholder="deepseek-chat" /><datalist id="ai-model-options"><option v-for="m in aiModels" :key="m" :value="m" /></datalist></label><button class="button secondary" :disabled="busy || aiLoadingModels || !ai.base.trim() || !ai.key.trim()" title="从服务拉取可用模型列表（GET /models）" @click="aiLoadModels">{{ aiLoadingModels ? '获取中…' : '获取模型' }}</button></div><label class="span-2">API Key<input v-model="ai.key" type="password" autocomplete="off" placeholder="sk-…" /></label></div><p class="muted">兼容 OpenAI 接口的服务（DeepSeek / Kimi / 通义 / Ollama 等）。配置仅保存在本浏览器，输入后自动保存并立即生效。</p><p v-if="aiFeedback" class="notice ai-feedback" role="status">{{ aiFeedback }}</p><div class="ai-config-actions"><button class="button secondary" :disabled="busy || !ai.base.trim() || !ai.key.trim() || !ai.model.trim()" @click="aiTest"><Check :size="14" />测试连接</button><span class="muted">点「测试连接」验证 Base URL / Key / 模型与跨域是否可用</span></div></div><div class="protocol-note">仅用于可信代码。远程部署时请经反向代理启用 HTTPS，并妥善保管访问令牌；进程资源限制不等于完整文件和网络隔离。</div></div><footer class="modal-footer"><button class="button primary" @click="saveSettings" :disabled="busy">保存设置</button></footer></section></div>

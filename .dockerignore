@@ -1,0 +1,16 @@
+.git
+.zcode
+.codex
+.agents
+.mimosa
+artifacts
+data
+**/bin
+**/obj
+**/node_modules
+web/dist
+.env
+.env.*
+**/*.log
+**/*.db
+**/*.sqlite*

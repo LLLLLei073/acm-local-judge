@@ -69,3 +69,12 @@ export const draftKey = (userId: string, problemId: string) => `acm:draft:v2:${e
 export function saveLocal(storage: Pick<Storage, 'setItem'>, key: string, value: string): boolean {
   try { storage.setItem(key, value); return true; } catch { return false; }
 }
+
+/** Search only text the board actually displays, including the explicit self marker. */
+export function filterLeaderboardRows<T extends { userId: string; anonymous: boolean; name?: string; studentId?: string; cfHandle?: string | null }>(rows: T[], query: string, currentUserId?: string): T[] {
+  const term = query.trim().toLowerCase();
+  return term ? rows.filter(row => {
+    const identity = row.anonymous ? '已匿名' : [row.name, row.studentId, row.cfHandle].filter(Boolean).join(' ');
+    return `${identity}${row.userId === currentUserId ? ' 我' : ''}`.toLowerCase().includes(term);
+  }) : rows;
+}

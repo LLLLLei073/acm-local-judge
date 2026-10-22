@@ -10,7 +10,8 @@ import CaseInspector from './components/CaseInspector.vue';
 import PublicFlowPreview from './components/PublicFlowPreview.vue';
 import TrainingOverview from './components/TrainingOverview.vue';
 import EnvironmentStatus from './components/EnvironmentStatus.vue';
-import { draftKey, saveLocal } from './domain/workbench';
+import CodeforcesPanel from './components/CodeforcesPanel.vue';
+import { draftKey, saveLocal, filterLeaderboardRows } from './domain/workbench';
 import type { TrainingData } from './types';
 import type { SubmissionContext } from './types';
 import { useSubmissionFeed } from './composables/useSubmissionFeed';
@@ -73,23 +74,23 @@ const setRows = computed(() => problems.value.filter(p =>
   statusMatch(p) && bandMatch(p)).sort((a,b) => sortBy.value==='rating-asc' ? a.rating-b.rating : sortBy.value==='rating-desc' ? b.rating-a.rating : sortBy.value==='popular' ? (b.solvedBy??0)-(a.solvedBy??0) : 0));
 const shownContests = computed(() => contests.value.filter(c => contestPhase.value==='all'||c.phase===contestPhase.value));
 const ungrouped = computed(() => problems.value.filter(p => !p.contestTitle).length);
+const showUngrouped = computed(() => ungrouped.value > 0 && (contestPhase.value === 'all' || contestPhase.value === 'open'));
 const me = computed(() => currentUser.value);
 const showAuth = computed(() => !me.value || needsAuth.value);
 // —— 登录 / 注册 ——
 const authTab = ref<'login' | 'register'>('login');
-const authForm = ref({ studentId: '', name: '', email: '', password: '', confirm: '' });
+const authForm = ref({ studentId: '', name: '', email: '', password: '', confirm: '', inviteCode: '' });
 const authError = ref(''), authBusy = ref(false);
 // —— 排行榜 ——
 const leaderboard = ref<{ cf: LeaderboardEntry[]; solved: LeaderboardEntry[]; site: SiteLeaderboardEntry[] }>();
 const lbTab = ref<'cf' | 'solved' | 'site'>('cf');
 // 三个榜的行形状取并集（site 榜缺 CF/解题字段，其余缺 rating 字段），模板按当前 tab 访问。
 type LbRow = LeaderboardEntry & Partial<SiteLeaderboardEntry>;
-const lbRows = computed<LbRow[]>(() => (leaderboard.value ? (lbTab.value === 'cf' ? leaderboard.value.cf : lbTab.value === 'solved' ? leaderboard.value.solved : leaderboard.value.site) as LbRow[] : []).filter(row => !leaderboardSearch.value || row.userId===me.value?.id || !row.anonymous && (row.name+' '+row.studentId+' '+row.cfHandle).toLowerCase().includes(leaderboardSearch.value.toLowerCase())));
+const lbRows = computed<LbRow[]>(() => filterLeaderboardRows(leaderboard.value ? (lbTab.value === 'cf' ? leaderboard.value.cf : lbTab.value === 'solved' ? leaderboard.value.solved : leaderboard.value.site) as LbRow[] : [], leaderboardSearch.value, me.value?.id));
 // —— 个人设置 ——
 const showProfile = ref(false), menuOpen = ref(false), profileSection=ref('account');
 const profileForm = ref({ name: '', email: '', anonymous: false });
 const passwordForm = ref({ current: '', next: '', confirm: '' });
-const cfHandleInput = ref(''), cfChallenge = ref(''), cfChallengeCode = ref(''), cfMinutes = ref(15);
 let pendingOperations=0;
 async function perform<T>(fn: () => Promise<T>):Promise<T|undefined> { error.value=''; pendingOperations++; busy.value=true; try { return await fn(); } catch(e) { error.value=e instanceof Error?e.message:String(e); } finally { busy.value=--pendingOperations>0; } }
 async function loadList() { problems.value = await api('/problems'); }
@@ -128,7 +129,7 @@ async function submitAuth() {
   authBusy.value = true;
   try {
     if (authTab.value === 'login') await userLogin(authForm.value.studentId.trim(), authForm.value.password);
-    else await registerUser({ studentId: authForm.value.studentId.trim(), name: authForm.value.name.trim(), email: authForm.value.email.trim(), password: authForm.value.password });
+    else await registerUser({ studentId: authForm.value.studentId.trim(), name: authForm.value.name.trim(), email: authForm.value.email.trim(), password: authForm.value.password, inviteCode: authForm.value.inviteCode.trim() });
     notice.value = '登录成功，评测机已就绪';
     await boot();
   } catch (e) { authError.value = e instanceof Error ? e.message : String(e); } finally { authBusy.value = false; }
@@ -136,7 +137,9 @@ async function submitAuth() {
 async function doLogout() {
   menuOpen.value = false;
   try { await userLogout(); } catch(e) { error.value=e instanceof Error?e.message:String(e); return; }
-  nav.value = 'set'; selected.value = undefined; closeFeed();
+  nav.value = 'set'; selected.value = undefined; standings.value = undefined; closeFeed();
+  submission.value=undefined; result.value=undefined; submissionContext.value=undefined; expanded.value=undefined;
+  showProfile.value=false; showSnapshot.value=false; snapshotSource.value=''; canViewSource.value=false;
   leaderboard.value = undefined; myHistory.value = []; training.value = undefined; history.value = []; source.value = ''; notice.value = ''; error.value = '';
 }
 function openProfile() {
@@ -144,7 +147,6 @@ function openProfile() {
   error.value = '';
   profileForm.value = { name: me.value.name, email: me.value.email, anonymous: me.value.anonymous };
   passwordForm.value = { current: '', next: '', confirm: '' };
-  cfHandleInput.value = ''; resetChallenge();
   profileSection.value='account'; showProfile.value = true;
 }
 async function saveProfile() {
@@ -160,33 +162,12 @@ async function savePassword() {
     passwordForm.value = { current: '', next: '', confirm: '' }; notice.value = '密码已修改'; showProfile.value = false;
   });
 }
-function resetChallenge() { cfChallenge.value = ''; cfChallengeCode.value = ''; }
-async function issueChallenge() {
-  await perform(async () => {
-    const data = await api<{ code: string; minutes: number }>('/users/me/codeforces', { method: 'POST', body: JSON.stringify({ handle: cfHandleInput.value.trim() }) });
-    cfChallenge.value = cfHandleInput.value.trim(); cfChallengeCode.value = data.code; cfMinutes.value = data.minutes;
-  });
-}
-async function verifyChallenge() {
-  await perform(async () => {
-    const data = await api<{ user: UserInfo }>('/users/me/codeforces/verify', { method: 'POST', body: JSON.stringify({ code: cfChallengeCode.value }) });
-    currentUser.value = data.user; resetChallenge(); showProfile.value = false;
-    notice.value = 'Codeforces 绑定成功'; loadLeaderboard().catch(() => {});
-  });
-}
-async function unbindCf() {
-  await perform(async () => {
-    const data = await api<{ user: UserInfo }>('/users/me/codeforces', { method: 'DELETE' });
-    currentUser.value = data.user; showProfile.value = false;
-    notice.value = '已解除 Codeforces 绑定'; loadLeaderboard().catch(() => {});
-  });
-}
 function openContest(title: string) { contestFilter.value = title; nav.value = 'set'; standings.value = undefined; }
 // 题库导航与「返回题库」共用：无论当前在哪个页（含排行榜/比赛/提交记录）都回到题库视图。
 function back() { selected.value = undefined; closeFeed(); nav.value = 'set'; standings.value = undefined; }
 async function select(id: string) {
   await perform(async () => {
-    const p = await api<Problem>('/problems/' + id); selected.value = p;
+    const p = await api<Problem>('/problems/' + id); standings.value=undefined; selected.value = p;
     restoreSource(p);
     result.value = undefined; submission.value = undefined; submissionContext.value=undefined; expanded.value = undefined; closeFeed(); tab.value = 'statement';
   });
@@ -253,6 +234,7 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
           <template v-if="authTab==='register'">
             <label>真实姓名<input v-model="authForm.name" placeholder="用于排行榜与提交记录展示" required /></label>
             <label>邮箱<input v-model="authForm.email" type="email" placeholder="用于唯一标识账号" required /></label>
+            <label>邀请码<input v-model="authForm.inviteCode" autocomplete="off" placeholder="按管理员要求填写" /></label>
           </template>
           <label>密码<input v-model="authForm.password" type="password" :autocomplete="authTab==='login' ? 'current-password' : 'new-password'" placeholder="至少 6 位" required /></label>
           <label v-if="authTab==='register'">确认密码<input v-model="authForm.confirm" type="password" autocomplete="new-password" required /></label>
@@ -300,7 +282,7 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
         <div v-if="error" class="alert" role="alert"><AlertCircle :size="17" />{{ error }}<button class="icon-btn push" aria-label="关闭错误" @click="error='' "><X :size="16" /></button></div>
         <div v-if="notice" class="notice" role="status"><Check :size="16" />{{ notice }}</div>
 
-        <main v-if="standings" class="history-page"><div class="page-heading"><div><div class="eyebrow">STANDINGS</div><h1>{{ standings.title }} · 排行榜</h1><p class="muted">{{ phaseLabel(standings.phase) }}<template v-if="standings.startsAt"> · {{ fmtTime(standings.startsAt) }}<template v-if="standings.endsAt"> – {{ fmtTime(standings.endsAt) }}</template></template> · ICPC 赛制：通过数优先，罚时 = 用时（分钟）+ 每次错误提交 20 分钟<template v-if="standings.rated"> · Rated<template v-if="standings.settled">，已结算校内 rating</template></template></p></div><div class="heading-actions"><button class="button secondary" @click="openStandings(standings.contestId)"><RefreshCw :size="15" />刷新</button><button class="button secondary" @click="standings=undefined; nav='contests'"><ChevronLeft :size="15" />返回比赛</button></div></div>
+        <main v-if="standings" class="history-page"><div class="page-heading"><div><div class="eyebrow">STANDINGS</div><h1>{{ standings.title }} · 排行榜</h1><p class="muted">{{ phaseLabel(standings.phase) }}<template v-if="standings.startsAt"> · {{ fmtTime(standings.startsAt) }}<template v-if="standings.endsAt"> – {{ fmtTime(standings.endsAt) }}</template></template> · ICPC 赛制：通过数优先，罚时 = 用时（分钟）+ 每次错误提交 20 分钟<template v-if="!standings.startsAt">；长期练习从各自首次提交起计时</template><template v-if="standings.rated"> · Rated<template v-if="standings.settled">，已结算校内 rating</template></template></p></div><div class="heading-actions"><button class="button secondary" @click="openStandings(standings.contestId)"><RefreshCw :size="15" />刷新</button><button class="button secondary" @click="standings=undefined; nav='contests'"><ChevronLeft :size="15" />返回比赛</button></div></div>
           <div class="table-wrap standings-wrap"><table class="standings-table"><thead><tr><th>#</th><th>选手</th><th v-for="p in standings.problems" :key="p.problemId" class="cell-head" :title="p.title + ' · ' + p.rating">{{ p.letter }}</th><th>通过</th><th>罚时</th><th v-if="standings.rated && standings.settled">Rating</th></tr></thead>
             <tbody>
               <tr v-for="r in standings.rows" :key="r.userId" :class="{'own-row':r.userId===me?.id}">
@@ -317,15 +299,15 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
 
         <main v-else-if="nav==='leaderboard' && !selected" class="history-page"><div class="page-heading"><div><div class="eyebrow">LEADERBOARD</div><h1>校内排行榜</h1><p class="muted">校内 rating 榜由 rated 比赛结算；Codeforces 榜基于绑定的 CF 账号；解题榜统计在本机通过的题目数。可在个人设置中选择匿名。</p></div><button class="button secondary" @click="loadLeaderboard"><RefreshCw :size="15" />刷新</button></div>
           <div class="set-bar"><div class="search-box"><Search :size="15" /><input v-model="leaderboardSearch" placeholder="搜索选手、学号或 CF 账号" aria-label="搜索排行榜" /></div><span class="muted">你的记录会高亮显示 · 匿名账号不会被姓名搜索命中</span></div><div class="panel-tabs lb-tabs">
-            <button :class="{active:lbTab==='site'}" @click="lbTab='site'"><BarChart3 :size="16" />校内 rating</button>
-            <button :class="{active:lbTab==='cf'}" @click="lbTab='cf'"><Trophy :size="16" />Codeforces rating</button>
-            <button :class="{active:lbTab==='solved'}" @click="lbTab='solved'"><Check :size="16" />校内解题</button>
+            <button :class="{active:lbTab==='site'}" :aria-pressed="lbTab==='site'" @click="lbTab='site'"><BarChart3 :size="16" />校内 rating</button>
+            <button :class="{active:lbTab==='cf'}" :aria-pressed="lbTab==='cf'" @click="lbTab='cf'"><Trophy :size="16" />Codeforces rating</button>
+            <button :class="{active:lbTab==='solved'}" :aria-pressed="lbTab==='solved'" @click="lbTab='solved'"><Check :size="16" />校内解题</button>
           </div>
           <div class="table-wrap"><table><thead><tr><th>名次</th><th>姓名</th><th>学号</th><th v-if="lbTab==='cf'">CF 账号</th><th v-if="lbTab==='cf'">Rating</th><th v-if="lbTab==='site'">校内 Rating</th><th v-if="lbTab==='site'">参赛场次</th><template v-if="lbTab!=='site'"><th>解题数</th><th>提交数</th></template></tr></thead>
             <tbody>
               <tr v-for="e in lbRows" :key="e.userId" :class="{'own-row':e.userId===me?.id}">
                 <td><span class="problem-index">{{ e.rank }}</span></td>
-                <td><strong v-if="!e.anonymous">{{ e.name }}</strong><span v-else class="muted">已匿名</span></td>
+                <td><strong v-if="!e.anonymous">{{ e.name }}</strong><span v-else class="muted">已匿名</span><span v-if="e.userId===me?.id" class="muted">（我）</span></td>
                 <td class="muted">{{ e.anonymous ? '已匿名' : e.studentId }}</td>
                 <td v-if="lbTab==='cf'">{{ e.anonymous ? '已匿名' : e.cfHandle }}</td>
                 <td v-if="lbTab==='cf'"><strong :style="{color: cfRankColor(e.cfRank)}">{{ e.cfRating ?? '—' }}</strong> <span class="muted cf-rank-label">{{ e.cfRank }}</span></td>
@@ -335,7 +317,7 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
                 <td v-if="lbTab!=='site'" class="muted">{{ e.submissionCount }}</td>
               </tr>
             </tbody>
-          </table><div v-if="!lbRows.length" class="empty-state">{{ lbTab==='site' ? '还没有已结算的 rated 比赛。比赛结束后访问其排行榜即自动结算。' : lbTab==='cf' ? '还没有人绑定 Codeforces 账号。在个人设置中绑定后即可上榜。' : '还没有用户在本机通过题目。' }}</div></div>
+          </table><div v-if="!lbRows.length" class="empty-state">{{ leaderboardSearch.trim() ? '没有匹配的选手。匿名账号可用“已匿名”筛选，也可搜索“我”定位本人。' : lbTab==='site' ? '还没有已结算的 rated 比赛。比赛结束后访问其排行榜即自动结算。' : lbTab==='cf' ? '还没有人绑定 Codeforces 账号。在个人设置中绑定后即可上榜。' : '还没有注册用户。注册后即可出现在解题榜。' }}<button v-if="leaderboardSearch.trim()" class="button secondary" @click="leaderboardSearch=''">清除搜索</button></div></div>
         </main>
 
         <main v-else-if="nav==='history' && !selected" class="history-page"><div class="page-heading"><div><div class="eyebrow">SUBMISSIONS</div><h1>提交记录</h1><p class="muted">保留逐测试点评测结果；源码仅本人可见。</p></div><button class="button secondary" @click="loadHistory"><RefreshCw :size="15" />刷新</button></div>
@@ -348,7 +330,7 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
           <div class="table-wrap"><table><thead><tr><th>状态</th><th>题目</th><th>提交者</th><th>类型</th><th>提交时间</th><th></th></tr></thead><tbody><tr v-for="s in history" :key="s.id" tabindex="0" @keydown.enter="openSubmission(s.id)" @click="openSubmission(s.id)"><td><span class="verdict" :class="s.status==='AC'?'success':active(s.status)?'pending':'failed'">{{ s.status }}</span></td><td>{{ s.title }}</td><td>{{ s.userName || '—' }}</td><td>{{ modeInfo(s.mode).label }}</td><td class="muted">{{ new Date(s.createdAt).toLocaleString('zh-CN') }}</td><td><ArrowUpRight :size="16" /></td></tr></tbody></table><div v-if="!history.length" class="empty-state">没有符合条件的提交记录。</div></div></main>
 
         <main v-else-if="nav==='contests' && !selected" class="history-page"><div class="page-heading"><div><div class="eyebrow">CONTESTS</div><h1>比赛</h1><p class="muted">AtCoder 式时间窗：未开赛的题目对选手隐藏，开赛后自动公布；rated 比赛结束后访问排行榜即结算校内 rating。</p></div><button class="button secondary" @click="loadContests(); loadList()"><RefreshCw :size="15" />刷新</button></div>
-          <div class="set-bar"><label>比赛阶段<select v-model="contestPhase"><option value="all">全部比赛</option><option value="running">进行中</option><option value="upcoming">未开始</option><option value="finished">已结束</option><option value="open">长期开放</option></select></label><span class="muted">{{ shownContests.length }} 场比赛</span></div><div class="contest-list">
+          <div class="set-bar"><label>比赛阶段<select v-model="contestPhase" aria-label="比赛阶段"><option value="all">全部比赛</option><option value="running">进行中</option><option value="upcoming">未开始</option><option value="finished">已结束</option><option value="open">长期开放</option></select></label><span class="muted">{{ shownContests.length }} 场比赛</span></div><div class="contest-list">
             <div v-for="c in shownContests" :key="c.id" class="contest-row" :class="{upcoming: c.phase==='upcoming'}">
               <button class="contest-main" @click="c.phase==='upcoming' ? (notice='「'+c.title+'」尚未开始，开赛后再来') : openContest(c.title)">
                 <span class="contest-title-line"><Trophy :size="16" class="success-text" /><strong>{{ c.title }}</strong><span v-if="c.rated" class="rated-chip" title="结束后结算校内 rating">RATED</span><span class="phase-badge" :class="c.phase">{{ phaseLabel(c.phase) }}</span></span>
@@ -361,11 +343,11 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
               </button>
               <button v-if="c.phase!=='upcoming'" class="button secondary" @click="openStandings(c.id)"><BarChart3 :size="14" />排行榜</button>
             </div>
-            <div class="contest-row">
+            <div v-if="showUngrouped" class="contest-row">
               <button class="contest-main" @click="openContest('none')"><span class="contest-title-line"><Layers :size="16" class="muted" /><strong>未分组</strong><span class="phase-badge open">长期开放</span></span><span class="contest-info"><span class="muted">{{ ungrouped }} 道题 · 点击进入题库</span></span></button>
             </div>
           </div>
-          <div v-if="!contests.length" class="empty-state">还没有比赛。管理员可在 /admin 的「比赛管理」中创建。</div>
+          <div v-if="!shownContests.length && !showUngrouped" class="empty-state">{{ contestPhase==='all' ? '暂时没有可参加的比赛。' : '没有这个阶段的比赛。' }}<button v-if="contestPhase!=='all'" class="button secondary" @click="contestPhase='all'">查看全部比赛</button></div>
         </main>
 
         <main v-else-if="!selected" class="history-page"><TrainingOverview :data="training" :problems="problems" :name="me?.name || '选手'" @open="select" @history="nav='history'; historyScope='mine'; loadHistory()" /><div class="page-heading"><div><div class="eyebrow">PROBLEM SET <span class="tiny-rule"></span> {{ setRows.length }} / {{ problems.length }}</div><h1>题库</h1><p class="muted">点击任意一行进入题目；支持按关键词、难度、类型、比赛与做题状态筛选。</p></div></div>
@@ -433,27 +415,7 @@ onBeforeUnmount(() => { clearInterval(clock); clearInterval(environmentClock); c
           </div>
           <div class="profile-actions"><button class="button secondary" :disabled="busy || !passwordForm.current || !passwordForm.next" @click="savePassword">修改密码</button></div>
 
-</div><div v-else>          <h3 class="section-label">Codeforces 绑定</h3>
-          <template v-if="!me?.cfHandle">
-            <p class="muted bind-note">绑定后你的 Codeforces rating 将出现在校内排行榜。为防止冒用，绑定需要验证账号归属。</p>
-            <div class="cf-bind">
-              <label>CF handle<input v-model="cfHandleInput" placeholder="如 tourist" /></label>
-              <button v-if="!cfChallenge" class="button secondary" :disabled="busy || !cfHandleInput.trim()" @click="issueChallenge">获取验证码</button>
-            </div>
-            <div v-if="cfChallenge" class="cf-challenge">
-              <p>1. 登录 Codeforces → Settings → Social，把 <b>Last name</b> 临时改为：</p>
-              <p><code class="cf-code">{{ cfChallengeCode }}</code> <span class="muted">（{{ cfMinutes }} 分钟内有效）</span></p>
-              <p>2. 保存后点击下方按钮验证；验证成功后可将 Last name 改回原值。</p>
-              <div class="profile-actions"><button class="button primary" :disabled="busy" @click="verifyChallenge">我已修改，立即验证</button><button class="text-link" @click="resetChallenge">取消</button></div>
-            </div>
-          </template>
-          <template v-else>
-            <div class="cf-bound">
-              <span class="cf-bound-handle"><b>{{ me.cfHandle }}</b></span>
-              <span :style="{color: cfRankColor(me.cfRank)}"><b>{{ me.cfRating ?? '—' }}</b> <small>{{ me.cfRank }}</small></span>
-              <button class="text-link danger-text" @click="unbindCf">解除绑定</button>
-            </div>
-          </template>
+</div><div v-else><CodeforcesPanel @changed="loadLeaderboard().catch(() => {})" />
 </div>
         </div>
       </section></div>

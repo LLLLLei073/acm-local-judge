@@ -108,8 +108,8 @@ manager → 引擎：
 | GET / PUT | `/api/environment` / `/api/settings` | 查询环境 / 设置 `{compiler:绝对路径}` |
 | GET / POST | `/api/problems` | 列表（选手仅见已发布题目，管理员额外带 `published` 字段）/ 新建完整题目对象 |
 | GET / PUT / DELETE | `/api/problems/{id}` | 查询 / 更新 / 删除题目，历史保留；未发布题目对非管理员返回 404 |
-| POST | `/api/problems/{id}/harden` | 强化测试数据：`{tests:[{input}]}`（≤20 条），沙箱编译标准答案逐条运行生成答案，以 `h01…` 追加为测试点；任一条超时/异常/答案超限则整体拒绝 |
-| POST | `/api/problems/{id}/brute` | 暴力对拍：`{source}` 编译后按题目限额逐测试点运行，遇首个非 AC 即停，返回 `{results,stopped}` |
+| POST | `/api/problems/{id}/harden` | 新数据：`{tests:[{input,answer?}]}`，1–20 条，单个输入/参考判定 ≤1 MiB。标准/特判自动计算答案；交互、通信、多进程使用提供的 `answer`（默认空）。按本题真实协议运行标准答案验证，整批 AC 才以 `h01…` 追加；失败不保存任何建议 |
+| POST | `/api/problems/{id}/brute` | 候选程序：`{source}`（≤1 MiB），使用正式引擎的 checker/interactor/双轮/manager/可视化流程，首个非 AC 即停，返回 `{results:[{name,verdict,cpuMs,message}],stopped}`。编译阶段失败为 400，消息保留 CE 或 Judge Error；不得按普通 token 比较替代复杂协议 |
 | POST | `/api/problems/{id}/rejudge-all` | 整题重测：该题全部历史提交按**当前**题目快照（含强化数据）重新入队，返回 `{requeued}` |
 | GET | `/api/problems/{id}/export` | ZIP 下载 |
 | POST | `/api/packages/preview` | multipart `file`，返回验证后的题目对象；POST 到 problems 完成导入 |
@@ -119,6 +119,17 @@ manager → 引擎：
 | POST | `/api/submissions/{id}/cancel` | 取消排队或运行任务 |
 | POST | `/api/submissions/{id}/rejudge` | 用原题目、源码、工具快照创建新提交 |
 
-题目对象带 `published` 与 `rating` 标志：`rating` 为 CF 风格 100–3500（0=未评级），**发布与加入比赛都要求已评级**（服务端在保存题目与保存比赛时分别校验）；题目新建默认为草稿，由管理员在验题工作台评级、验证后显式发布。题目的 `exampleSource` 是标准答案源码：一键验题运行它校验全部测试点，强化数据端点也用它计算新增输入的答案。管理端内置 LangChain 助手（浏览器直连用户配置的 OpenAI 兼容服务，请求不经过测评机服务端），用于评级建议与强化数据输入生成。
+题目对象带 `published` 与 `rating` 标志：`rating` 为 CF 风格 100–3500（0=未评级），**发布与加入比赛都要求已评级**（服务端在保存题目与保存比赛时分别校验）；题目新建默认为草稿，由管理员评级、验证后显式发布。`exampleSource` 用于验题及新数据的真实协议验证；仅标准/特判模式直接运行它计算 `.ans`。管理端 LangChain 助手由浏览器直连配置的 OpenAI 兼容服务，用于评级、题面及输入提议，不能代替协议验证和人工约束检查。
 
 源码快照与结果文件位于 submission id 对应目录。程序 stdout 以可读 UTF-8（替换非法字节）供 UI 展示，同时 `stdoutBase64` 保存原始字节；判题和双轮转发不使用有损展示文本。trace 的 dataBase64 保留方向、时间戳及原始字节。
+# Codeforces 账号与同步
+
+- `POST /api/users/me/codeforces {handle}`：申请或复用未过期的验证码（15 分钟）；`GET /api/users/me/codeforces/challenge` 返回当前账号的 `challenge {handle,code,expiresAt,minutes}` 或 null。
+- `POST /api/users/me/codeforces/verify {code}`：核对 Last name，成功返回 `200 {status:"verified",user}` 并排队同步；官方资料不匹配返回 `202 {status:"pending",retryAfterSeconds:10,message,challenge}`。不匹配绝不完成绑定。错误验证码、过期、上游错误使用明确的 400 错误信息。
+- `POST /api/users/me/codeforces/sync`：要求已绑定，返回 202 和后台任务状态；同一绑定的重复请求复用正在运行的任务。关闭页面不取消后台任务。
+- `GET /api/users/me/codeforces/history?page=1&view=submissions`：只返回当前登录用户的数据；`view=solved` 为通过题目列表。返回 `handle,updatedAt,submissionCount,solvedCount,page,pageCount,items,sync,user`，每页 50 条；`sync` 含 `status,fetched,message`。状态为 idle / queued / running / complete / failed。
+- `DELETE /api/users/me/codeforces`：解绑并清除本地 CF 记录；绑定版本防止旧任务重新写入。
+
+官方 `user.status` 每次读取 1000 条，按提交 ID 去重；全量扫描会刷新重判结果。只有所有页和账号资料都成功时才在 SQLite 事务中替换快照。一次最多 20 万条、20 分钟，超限明确失败并保留旧快照。多个调用者共享至少 2.1 秒请求间隔，限流和临时错误最多重试两次。打开排行榜会为超过一小时的账号安排后台刷新；自动失败重试至少间隔五分钟。中断时保留最近成功快照，重新打开面板或手动同步可继续发起新任务。
+
+接口只读取公开资料，不需要 CF 密码或 API 密钥，也不把 CF 成绩并入本站评测结果。官方参考：[API 使用约束](https://codeforces.com/apiHelp)、[user.info / user.status](https://codeforces.com/apiHelp/methods)。
