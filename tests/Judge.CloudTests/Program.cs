@@ -54,7 +54,7 @@ try
         catch (PostgresException ex) when (ex.SqlState == "42501") { Check(true, "backend database role cannot read Supabase Auth"); }
     }
     Check(!File.Exists(Path.Combine(data, "judge.db")), "cloud mode never creates SQLite database");
-    if (Environment.GetEnvironmentVariable("ACM_CLOUD_E2E") == "1")
+    if (Environment.GetEnvironmentVariable("ACM_CLOUD_E2E") is {Length: >0} e2eMode)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
         var url = $"http://127.0.0.1:{port}";
@@ -83,7 +83,7 @@ try
             using (var denied=await http.PostAsync("/api/worker/claim",null)) Check(denied.StatusCode==HttpStatusCode.Unauthorized,"admin token cannot impersonate worker");
             using (var denied=await http.PostAsJsonAsync("/api/users/register",new { studentId="91234444",name="Invite test",email="invite@example.test",password="cloud-test-123" })) Check(denied.StatusCode==HttpStatusCode.Forbidden,"cloud registration requires invitation");
             agent = Start("artifacts/agent/Judge.Agent.dll", new() { ["ACM_CLOUD_URL"] = url, ["ACM_WORKER_TOKEN"] = worker });
-            foreach (var template in Examples.All())
+            foreach (var template in e2eMode == "authoring" ? [] : Examples.All())
             {
                 var p = store.Save(template with {Title="Cloud engine acceptance "+template.Mode},true); extraProblems.Add(p.Id);
                 using var submitted=await http.PostAsJsonAsync("/api/submissions",new {problemId=p.Id,source=p.ExampleSource}); submitted.EnsureSuccessStatusCode();
@@ -111,11 +111,13 @@ try
             var broken=await Submit("this is not C++"); await WaitFor(broken.Id,s=>!JudgeQueue.IsActive(s));
             Check(store.Result(broken.Id).Status=="CE","remote compiler error preserved");
             store.Save(problem with {Limits=new Limits {CpuMs=60000,WallMs=90000}},false);
+            var existingSolutions=Process.GetProcessesByName("solution").Select(p=>p.Id).ToHashSet();
             var looping=await Submit("#include <windows.h>\nint main(){for(;;) Sleep(10);}");
             await WaitFor(looping.Id,s=>s=="Running");
             using var cancelled=await http.PostAsync($"/api/submissions/{looping.Id}/cancel",null); cancelled.EnsureSuccessStatusCode();
             await Task.Delay(8000);
             Check(store.Result(looping.Id).Status=="Cancelled","real active agent cancellation remains terminal");
+            Check(!Process.GetProcessesByName("solution").Any(p=>!existingSolutions.Contains(p.Id)),"cancelled native process has exited");
             var afterCancel=await Submit(problem.ExampleSource); await WaitFor(afterCancel.Id,s=>!JudgeQueue.IsActive(s));
             Check(store.Result(afterCancel.Id).Status=="AC","agent cleans up cancelled execution and accepts next job");
         }

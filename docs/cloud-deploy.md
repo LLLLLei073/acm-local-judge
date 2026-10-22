@@ -1,10 +1,10 @@
 # 免费云端部署
 
-更新时间：2026-10-22。部署目标 Render Free + Supabase Free；实际发布状态以平台部署记录为准。
+更新时间：2026-10-22。当前部署目标 Back4app Containers Free + Supabase Free；Render 免费服务被账号绑卡要求阻止，未创建。实际发布状态见 [验收记录](cloud-verification-2026-10-22.md)。
 
 ## 架构与数据
 
-Render 的一个 Docker Web Service 同时提供 Vue 网页与 ASP.NET Core API，保持同源 Cookie。Supabase PostgreSQL 保存账号、题目、比赛、CF 历史、提交和结果。Windows Agent 通过 HTTPS 主动领取任务，在本机使用 GCC 与 Job Objects 执行五类评测，Render 不执行提交代码。
+一个 Docker Web Service 同时提供 Vue 网页与 ASP.NET Core API，保持同源 Cookie。Supabase PostgreSQL 保存账号、题目、比赛、CF 历史、提交和结果。Windows Agent 通过 HTTPS 主动领取任务，在本机使用 GCC 与 Job Objects 执行五类评测，网页容器不执行提交代码。
 
 本次使用全新云端数据库，不自动迁移本机账号、私有题目或提交记录。本机 SQLite 与现有服务保留；需要的题目可通过题目包导入。
 
@@ -25,7 +25,15 @@ Render 的一个 Docker Web Service 同时提供 Vue 网页与 ASP.NET Core API�
 3. 使用控制台给出的 Session pooler（5432），用户名 acm_backend.<project-ref>。本次主机 aws-0-ap-southeast-1.pooler.supabase.com；新项目需重新查询。
 4. 必须使用 SSL Mode=VerifyFull；deploy/supabase-ca.crt 是 Supabase 官方公开根证书，不含秘密。
 
-## Render 设置
+## Back4app Containers 设置
+
+官方免费方案无需信用卡，0.25 CPU、256 MB 内存、美国区域；实际限额以控制台为准。先完成账号登录，再将 GitHub 授权限定为本仓库，选择分支 codex/free-cloud-deploy、根目录 /、根目录 Dockerfile、Free 套餐。
+
+Dockerfile 声明端口 8080，默认 PORT=8080，健康检查 /healthz。配置下表的五个秘密变量；获得容器公开域名后，还必须设置 ACM_ALLOWED_HOSTS 为该域名（不含 https:// 或路径）。否则应用会拒绝该 Host。若平台自定义端口，同时修改 PORT 和容器公开端口。
+
+先保持自动部署开启；只有构建成功、容器可用、公开 HTTPS 网页和真实评测通过，才算发布完成。
+
+## 可选 Render 设置
 
 运行时 Docker，根目录 Dockerfile，套餐 free。容器非 root 运行，监听 0.0.0.0:$PORT，健康检查 /healthz。公开主机自动加入 Host 白名单。
 

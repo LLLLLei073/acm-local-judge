@@ -4,6 +4,8 @@
 
 跨平台 C++23 测评工作台：Windows 本机开箱即用，可部署到 Linux 服务器（见 [部署指南](docs/deploy.md)）。Vue 3 + Monaco 前端，ASP.NET Core 10 后端，独立 Worker，SQLite 持久化。
 
+免费云端方案使用 Docker 网页/API、Supabase PostgreSQL 和本机 Windows Agent；配置与当前发布边界见 [云端部署](docs/cloud-deploy.md) 及 [发布验收记录](docs/cloud-verification-2026-10-22.md)。
+
 ## 启动
 
 双击项目根目录的 **`start.cmd`**。首次启动会安装前端依赖、构建服务并打开 **http://127.0.0.1:27123**。安装完成后网页和评测可以离线运行，不依赖 CDN。

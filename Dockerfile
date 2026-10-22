@@ -19,6 +19,7 @@ COPY --from=backend /out/ artifacts/server/
 COPY --from=frontend /src/web/dist/ web/dist/
 COPY toolkit/ toolkit/
 COPY deploy/supabase-ca.crt deploy/supabase-ca.crt
-ENV ACM_ROOT=/app ACM_DATA=/tmp/acm-data ACM_HOST=0.0.0.0
+ENV ACM_ROOT=/app ACM_DATA=/tmp/acm-data ACM_HOST=0.0.0.0 PORT=8080
+EXPOSE 8080
 USER $APP_UID
 ENTRYPOINT ["dotnet", "artifacts/server/Judge.Server.dll"]
