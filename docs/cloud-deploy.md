@@ -2,6 +2,8 @@
 
 更新时间：2026-10-22。Supabase Free 已就绪，网页托管仍未完成：Render 要求绑卡；Back4app Free 实测只提供 60 分钟临时公开 URL，不适合长期托管。以下保留配置参考，不代表已上线。实际发布状态见 [验收记录](cloud-verification-2026-10-22.md)。
 
+2026-10-23：Docker 安装层修复已推送 f3807ef，完整 Linux 镜像构建与资产检查通过。当前改为尝试 Northflank Sandbox；其官方套餐页明确标注免费、无需绑卡、持续运行。需在实际账号控制台确认免费资源后再创建，尚未上线。
+
 ## 架构与数据
 
 一个 Docker Web Service 同时提供 Vue 网页与 ASP.NET Core API，保持同源 Cookie。Supabase PostgreSQL 保存账号、题目、比赛、CF 历史、提交和结果。Windows Agent 通过 HTTPS 主动领取任务，在本机使用 GCC 与 Job Objects 执行五类评测，网页容器不执行提交代码。
