@@ -15,10 +15,12 @@
 ## 资源归属
 
 - Supabase：xlei74647@gmail.com's Org / plbalfgigiqrfpwcuwro，项目 acm-local-judge / qsscjqrtzkfmyodoicco，新加坡，Free。
-- Render：Lei's workspace / tea-dbca0lon74is73fs2sqg，服务 acm-local-judge，新加坡，Free。
+- Render：原拟使用 Lei's workspace / tea-dbca0lon74is73fs2sqg；创建 Free 服务时要求银行卡，服务未创建。
 - GitHub：LLLLLei073/acm-local-judge。部署分支、提交和公开 URL 见发布验收记录。
 
 不启用付费实例、磁盘或数据库升级。免费服务休眠、构建和容量限制以平台当前控制台为准。
+
+截至 2026-10-23，Back4app 免费地址有 60 分钟限制；Northflank 实际创建服务也要求银行卡，已停止这两个平台的正式部署。完整 Linux 镜像构建通过，但网站尚未上线。见 cloud-verification-2026-10-23.md，后续平台需重新核对实际账号限制。
 
 ## 数据库初始化
 

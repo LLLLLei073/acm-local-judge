@@ -21,16 +21,24 @@
 
 - Render：创建 Free 服务返回 402，要求付款信息；未创建服务。
 - Back4app：用户已创建 Free 应用，但控制台明确显示临时 URL 仅有效 60 分钟。未升级，未向该平台配置数据库凭据。
-- Northflank：2026-10-23 官方 https://northflank.com/pricing 页面显示 Sandbox Free / No card needed / Always on，提供 2 个服务、2 个任务和 1 个数据库额度。已打开账号入口，等待用户完成注册或登录；实际创建时仍须核对免费套餐，不能选择 Pay as you go。
+- Northflank：用户已完成登录，当前为 Favorys's Team / Free Team。官方价格页虽然显示 No card needed，实际 Default 项目的服务创建表单却明确要求 Payment method / Add a card，并说明 Developer Sandbox 也需银行卡验证。没有创建服务、连接 GitHub 或输入应用密钥；不满足用户免绑卡要求，停止该平台部署。页面证据保存在本机 artifacts/cloud-deploy/northflank-card-required.png。
 
-## Northflank 待执行参数
+## 已准备的通用容器参数（尚未上线）
 
-- 仅使用 Northflank Cloud 免费 Sandbox，不创建 BYOC、磁盘、GPU、额外数据库或付费资源。
+- 仅使用经实际控制台确认免绑卡的免费资源，不创建付费磁盘、GPU 或额外数据库。
 - 项目、服务名 acm-local-judge；来源为公开仓库 LLLLLei073/acm-local-judge 的 codex/free-cloud-deploy 分支。
 - Combined service，Dockerfile=/Dockerfile，上下文仓库根目录，单实例免费资源规格。
 - 公共 HTTP 端口 8080，健康检查 /healthz。
 - 运行环境需要 ACM_POSTGRES、ACM_TOKEN、ACM_SESSION_SECRET、ACM_WORKER_TOKEN、ACM_REGISTRATION_CODE；在确定平台公开域名后设置 ACM_ALLOWED_HOSTS。
 - 数据库继续使用已创建的 Supabase，SSL VerifyFull 与 /app/deploy/supabase-ca.crt。
 - 网站可用后启动本机 Windows Agent，并执行公开 HTTPS 注册登录、提交、结果、权限与重启持久化验收。
+
+## 后续选择
+
+已向用户说明并等待选择：Railway 免费额度，或本机运行网站加免费隧道；未擅自创建新的账号或资源。
+
+- [Railway 官方试用说明](https://docs.railway.com/pricing/free-trial)：首次 $5 / 最长 30 天，之后 Free 每月 $1，不结转，不能保证此应用整月在线。账号若只能获得 Limited Trial，会限制出站网络，必须先核对能否连接 Supabase，不能把注册成功视为可部署。
+- [Hugging Face 当前官方说明](https://huggingface.co/docs/hub/spaces-overview)：创建 Docker Space 已要求付费套餐，且默认出站端口不包含 PostgreSQL 5432，因此没有让用户继续注册该平台。
+- 本机隧道方案需要电脑持续开机；随机临时 URL、实时推送与长期域名能力需在选择具体隧道后验证，不能直接当作独立云端托管。
 
 部署仍未完成，没有可交付的长期公网地址。本机数据保留，未迁移到云端。
