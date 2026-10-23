@@ -4,6 +4,10 @@
 
 ## 当前发布状态
 
+最新：Back4app 首次镜像构建在 pnpm install 阶段失败，错误 ERR_PNPM_IGNORED_BUILDS（esbuild）。根因是 Dockerfile 先复制 package.json/lockfile，但没有在安装前复制已有的 pnpm-workspace.yaml。现已补齐，隔离空目录安装通过，esbuild postinstall 成功。尚待完整 Linux 镜像构建验证。
+
+Back4app 控制台已创建 Free 应用 eecd7090-0563-42a9-bb4f-6b0adff404d0，但明确显示公开 URL 仅有效 60 分钟，永久地址需升级。此免费产品不适合作为长期公开站点。此前对其免费托管能力的推荐不完整；不升级、不把临时 URL 当作部署完成。当前控制台显示尚未设置环境变量，因此还没有接入 Supabase 或正式 Windows Agent。
+
 尚未获得公网服务地址。Render 在明确指定 plan=free 后返回 HTTP 402：账号必须先添加付款信息，服务没有创建。未切换付费套餐，未创建磁盘。
 
 用户已选择更换无需绑卡的平台。备选改为 Back4app Containers Free，官方说明无需信用卡并支持 Docker/.NET；注册页已打开，等待用户完成登录与必要的账户授权。Supabase 数据库继续复用。

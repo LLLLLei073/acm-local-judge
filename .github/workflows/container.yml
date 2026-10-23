@@ -1,0 +1,36 @@
+name: Container build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/free-cloud-deploy]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - Directory.Build.props
+      - src/Judge.Core/**
+      - src/Judge.Server/**
+      - web/**
+      - toolkit/**
+      - deploy/supabase-ca.crt
+      - .github/workflows/container.yml
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build complete Linux image
+        run: docker build --progress=plain -t acm-local-judge:check .
+      - name: Check packaged server and web assets
+        run: >-
+          docker run --rm --entrypoint sh acm-local-judge:check -c
+          'test -s /app/web/dist/index.html &&
+          test -s /app/web/dist/admin.html &&
+          test -s /app/artifacts/server/Judge.Server.dll &&
+          test -s /app/deploy/supabase-ca.crt &&
+          dotnet --list-runtimes'

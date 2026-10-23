@@ -1,6 +1,6 @@
 # 免费云端部署
 
-更新时间：2026-10-22。当前部署目标 Back4app Containers Free + Supabase Free；Render 免费服务被账号绑卡要求阻止，未创建。实际发布状态见 [验收记录](cloud-verification-2026-10-22.md)。
+更新时间：2026-10-22。Supabase Free 已就绪，网页托管仍未完成：Render 要求绑卡；Back4app Free 实测只提供 60 分钟临时公开 URL，不适合长期托管。以下保留配置参考，不代表已上线。实际发布状态见 [验收记录](cloud-verification-2026-10-22.md)。
 
 ## 架构与数据
 
@@ -26,6 +26,8 @@
 4. 必须使用 SSL Mode=VerifyFull；deploy/supabase-ca.crt 是 Supabase 官方公开根证书，不含秘密。
 
 ## Back4app Containers 设置
+
+**限制：控制台显示 Free URL 只有效 60 分钟，永久地址需要升级。用户要求只免费，因此不在这里继续正式上线。**
 
 官方免费方案无需信用卡，0.25 CPU、256 MB 内存、美国区域；实际限额以控制台为准。先完成账号登录，再将 GitHub 授权限定为本仓库，选择分支 codex/free-cloud-deploy、根目录 /、根目录 Dockerfile、Free 套餐。
 
