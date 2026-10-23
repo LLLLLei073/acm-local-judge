@@ -15,7 +15,7 @@
 - 容器内检查 index.html、admin.html、Judge.Server.dll 和 Supabase CA 证书存在。
 - 检查容器中 .NET 运行时可用。
 
-该检查没有连接生产数据库或运行网站，不能代替公网部署验收。日志保存在 artifacts/cloud-deploy/linux-container-build.log。
+该检查没有连接生产数据库或运行网站，不能代替公网部署验收。构建状态与步骤结论保存在 artifacts/cloud-deploy/linux-container-build-status.json；完整日志下载曾遇 TLS 握手超时，可直接打开上述 Actions 页面查看。
 
 ## 托管选择
 
